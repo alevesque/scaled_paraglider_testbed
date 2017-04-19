@@ -1,5 +1,5 @@
 /*******************************************************************************
-* balance_config.c
+* config.c
 *
 * Contains the settings struct for configuration of balance.c
 * Settings are contained here for neatness.
