@@ -21,6 +21,9 @@ typedef struct reference_value_t{ //setpoints
 	armstate_t armstate;	// see armstate_t declaration
 	float theta;			// body lean angle (rad)
 	float phi;				// wheel position (rad)
+	float angle_about_x_axis_ref; //body angle about x axis
+	float angle_about_y_axis_ref; //body angle about y axis
+	float angle_about_z_axis_ref; //body angle about z axis
 } reference_value_t;
 
 /*******************************************************************************
@@ -392,15 +395,15 @@ void* printf_loop(void* ptr){
 		new_state = get_state();
 		// check if this is the first time since being paused
 		if(new_state==RUNNING && last_state!=RUNNING){
-			printf("\nRUNNING\n"); //**************************change variables below and these **************************************
-			printf("  Roll     |");
-			printf("  Roll Reference     |");
-			printf("  Pitch    |");
-			printf("  Pitch Reference     |");
-			printf("  Yaw      |");
-			printf("  Yaw Reference     |");
-			printf("  battery_voltage  |");
-			printf("armstate|");
+			printf("\nRUNNING\n");
+			printf("  Roll  |");
+			printf("  Roll Reference  |");
+			printf("  Pitch  |");
+			printf("  Pitch Reference  |");
+			printf("  Yaw  |");
+			printf("  Yaw Reference  |");
+			printf("  Battery Voltage  |");
+			printf("  Armstate  |");
 			printf("\n");
 		}
 		else if(new_state==PAUSED && last_state!=PAUSED){
