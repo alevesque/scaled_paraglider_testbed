@@ -217,9 +217,9 @@ int control_tilt(){
 	// motor duty cycles
 	float left_pulley_duty_cycle, right_pulley_duty_cycle;
 
+	//need to test to make sure this gives correct orientation
 	
-
-	// angle theta is positive in the direction of forward tip around X axis********************redefine******************change data.accel[], data.gyro[] etc because numbers might be wrong
+	// angle theta is positive in the direction of forward tip around X axis
 	// find angle from accelerometer
 	x_orientation_from_accel = atan2(-1*data.accel[2],data.accel[1]);
 
@@ -239,9 +239,9 @@ int control_tilt(){
 	
 	
 
-	// angle theta is positive in the direction of forward tip around X axis********************redefine***************
+	// angle theta is positive in the direction of forward tip around X axis
 	// find angle from accelerometer
-	y_orientation_from_accel = atan2(-1*data.accel[2],data.accel[1]);
+	y_orientation_from_accel = atan2(-1*data.accel[2],data.accel[0]);
 
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	yangle = yangle + 0.01*data.gyro[0]*DEG_TO_RAD;
@@ -259,9 +259,9 @@ int control_tilt(){
 	
 	
 
-	// angle theta is positive in the direction of forward tip around X axis*********************redefine**********
+	// angle theta is positive in the direction of forward tip around X axis
 	// find angle from accelerometer
-	z_orientation_from_accel = atan2(-1*data.accel[2],data.accel[1]);
+	z_orientation_from_accel = atan2(data.accel[1],data.accel[0]);
 
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	zangle = zangle + 0.01*data.gyro[0]*DEG_TO_RAD;
