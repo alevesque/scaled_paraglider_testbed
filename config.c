@@ -1,5 +1,5 @@
 /*******************************************************************************
-* balance_config.c
+* config.c
 *
 * Contains the settings struct for configuration of balance.c
 * Settings are contained here for neatness.
@@ -13,6 +13,7 @@
 #define SAMPLE_RATE_HZ 200	// main filter and control loop speed
 #define DT 0.005      		// 1/sample_rate
 
+
 // Structural properties of BBB
 
 #define 	CAPE_MOUNT_ANGLE_X		0//  0.35 for blUE
@@ -23,7 +24,8 @@
 //#define 	WHEEL_RADIUS_M			0.034
 //#define 	TRACK_WIDTH_M			0.035
 #define 	V_NOMINAL				7.4
-/*
+
+
 // inner loop controller 200hz
 #define 	D1_GAIN					-3.5
 #define 	D1_ORDER				2
@@ -37,7 +39,7 @@
 #define		D2_NUM					{ 1, -1 }
 #define		D2_DEN					{ 1.0000, -0.9 }
 #define 	THETA_REF_MAX	0.37
-*/
+
 // electrical hookups
 #define 	MOTOR_CHANNEL_L 		4
 #define 	MOTOR_CHANNEL_R 		1
