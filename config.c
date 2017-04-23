@@ -13,14 +13,18 @@
 #define SAMPLE_RATE_HZ 200	// main filter and control loop speed
 #define DT 0.005      		// 1/sample_rate
 
-// Structural properties of eduMiP
 
-#define 	CAPE_MOUNT_ANGLE		0.40//  0.35 for blUE
-#define 	GEARBOX 				35.577
+// Structural properties of BBB
+
+#define 	CAPE_MOUNT_ANGLE_X		0//  0.35 for blUE
+#define 	CAPE_MOUNT_ANGLE_Y		0//  0.35 for blUE
+#define 	CAPE_MOUNT_ANGLE_Z		0//  0.35 for blUE
+//#define 	GEARBOX 				35.577
 #define 	ENCODER_RES				60
-#define 	WHEEL_RADIUS_M			0.034
-#define 	TRACK_WIDTH_M			0.035
+//#define 	WHEEL_RADIUS_M			0.034
+//#define 	TRACK_WIDTH_M			0.035
 #define 	V_NOMINAL				7.4
+
 
 // inner loop controller 200hz
 #define 	D1_GAIN					-3.5
