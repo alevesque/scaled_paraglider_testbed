@@ -1,6 +1,6 @@
 #include <usefulincludes.h>
 #include <roboticscape.h>
-#include "balance_config.h"
+#include "config.h"
 
 /*******************************************************************************
 * armstate_t
@@ -21,6 +21,8 @@ typedef struct reference_value_t{ //setpoints
 	armstate_t armstate;	// see armstate_t declaration
 	float theta;			// body lean angle (rad)
 	float phi;				// wheel position (rad)
+	float right_pulley_angle_ref;	// pulley rotation
+	float left_pulley_angle_ref;
 	float angle_about_x_axis_ref; //body angle about x axis
 	float angle_about_y_axis_ref; //body angle about y axis
 	float angle_about_z_axis_ref; //body angle about z axis
@@ -42,19 +44,38 @@ typedef struct core_state_t{
 	float u1;			// output of controller to weight shift
 	float u2_left;			// output of controller to pulley motors
 	float u2_right;
+	int start_cond;
 } core_state_t;
+
+/*******************************************************************************
+* orientation_t
+*
+* This is the system orientation as seen by accelerometer, gyroscope
+*******************************************************************************/
+typedef struct orientation_t{
+	float x_gyro;
+	float x_accel;
+	float y_gyro;
+	float y_accel;
+	float z_gyro;
+	float z_accel;
+} orientation_t;
+
 
 /*******************************************************************************
 * Local Function declarations	
 *******************************************************************************/
 // IMU interrupt routine
 int control_tilt();
+
 // threads
 void* reference_value_manager(void* ptr);
 void* battery_checker(void* ptr);
 void* printf_loop(void* ptr);
-void* outer_loop(void* ptr);
+void* read_input(void* ptr);
+
 // regular functions
+int is_flying();
 int zero_out_controller();
 int disarm_controller();
 int arm_controller();
@@ -67,18 +88,17 @@ int on_pause_released();
 core_state_t sys_state;
 reference_value_t reference_value;
 imu_data_t data;
+orientation_t orientation;
 
 //create filters
-d_filter_t lowpass;
-d_filter_t highpass;
+d_filter_t lowpass_x;
+d_filter_t highpass_x;
+d_filter_t lowpass_y;
+d_filter_t highpass_y;
+d_filter_t lowpass_z;
+d_filter_t highpass_z;
 
-//global variable for angle so it can be used as a reference for each call from imu interrupt
-static double xangle = 0;
-static double x_orientation_from_accel;
-static double yangle = 0;
-static double y_orientation_from_accel;
-static double zangle = 0;
-static double z_orientation_from_accel;
+
 
 /*******************************************************************************
 * main()
@@ -100,14 +120,18 @@ int main(){
 		
 	//timestep, dt
 	double const dt = 1.0/(float)SAMPLE_RATE_HZ;
-	//rise time, tr **********************************************find new rise time if needed************************
+	//rise time, tr **********************************************find new rise time if needed, prob need for high pass cuz noisy************************
 	double const tr = 1;
 	//time constant from rise time
 	float const tau = tr/2.2;
 
 	//set up filters for finding theta from sensors
-	lowpass  = create_first_order_lowpass(dt, tau);
-	highpass  = create_first_order_highpass(dt, tau);
+	lowpass_x  = create_first_order_lowpass(dt, tau);
+	highpass_x  = create_first_order_highpass(dt, tau);
+	lowpass_y  = create_first_order_lowpass(dt, tau);
+	highpass_y  = create_first_order_highpass(dt, tau);
+	lowpass_z  = create_first_order_lowpass(dt, tau);
+	highpass_z  = create_first_order_highpass(dt, tau);
 
 	// set up button handlers
 	set_pause_pressed_func(&on_pause_pressed);
@@ -132,9 +156,9 @@ int main(){
 	
 
 
-	//*****************************need orientation***********************************
-	conf.orientation = ORIENTATION_Y_UP;
-	//
+	//get orientation of beaglebone
+	conf.orientation = ORIENTATION_Z_UP;
+	
 
 
 	// start imu
@@ -147,10 +171,10 @@ int main(){
 	pthread_t reference_value_thread;
 	pthread_create(&reference_value_thread, NULL, reference_value_manager, (void*) NULL);
 
-	//start thread for outer loop controller
-	pthread_t outer_loop_thread;
-	pthread_create(&outer_loop_thread, NULL, outer_loop, (void*) NULL);
-
+	//start thread for reading user input
+	pthread_t read_input_thread;
+	pthread_create(&read_input_thread, NULL, read_input, (void*) NULL);
+	
 	//set imu interrupt function
 	set_imu_interrupt_func(&control_tilt);
 	
@@ -165,8 +189,12 @@ int main(){
 	}
 	
 	//cleanup
-	destroy_filter(&lowpass);
-	destroy_filter(&highpass);
+	destroy_filter(&lowpass_x);
+	destroy_filter(&highpass_x);
+	destroy_filter(&lowpass_y);
+	destroy_filter(&highpass_y);
+	destroy_filter(&lowpass_z);
+	destroy_filter(&highpass_z);
 	power_off_imu();
 	cleanup_cape();
 	set_cpu_frequency(FREQ_ONDEMAND);
@@ -192,10 +220,10 @@ void* reference_value_manager(void* ptr){
 		if(get_state() != RUNNING) continue;
 
 		// if we got here the state is RUNNING, but controller is not
-		// necessarily armed. If DISARMED, wait for the user to pick MIP up
-		// which will we detected by wait_for_starting_condition()
+		// necessarily armed. If DISARMED, wait for the user to send start signal
+		// which will we detected by is_flying()
 		if(reference_value.armstate == DISARMED){
-			if(wait_for_starting_condition()==0){
+			if(is_flying()==0){
 				zero_out_controller();
 				arm_controller();
 			} 
@@ -217,70 +245,50 @@ void* reference_value_manager(void* ptr){
 *******************************************************************************/
 int control_tilt(){
 
-	// motor duty cycles
+	//brake line motor duty cycles
 	float left_pulley_duty_cycle, right_pulley_duty_cycle;
-
-	//need to test to make sure this gives correct orientation
+	//weight shift motor duty cycle
+	float ws_duty;
 	
-	// angle theta is positive in the direction of forward tip around X axis
 	// find angle from accelerometer
-	x_orientation_from_accel = atan2(-1*data.accel[2],data.accel[1]);
+	orientation.x_accel = atan2(-1*data.accel[1],sqrt(pow(data.accel[2],2) + pow(data.accel[0],2)))*RAD_TO_DEG;
 
 	// integrates the gyroscope angle rate using Euler's method to get the angle
-	xangle = xangle + 0.01*data.gyro[0]*DEG_TO_RAD;
+	orientation.x_gyro = sys_state.angle_about_x_axis + 0.01*data.gyro[0];
 	
 	// filter angle data
-	double lp_x = march_filter(&lowpass, x_orientation_from_accel);
-	double hp_x = march_filter(&highpass, xangle);
+	double lp_x = march_filter(&lowpass_x, orientation.x_accel);
+	double hp_x = march_filter(&highpass_x, orientation.x_gyro);
 	
 	// get most recent filtered value
-	double lp_filtered_output_x = newest_filter_output(&lowpass);
-	double hp_filtered_output_x = newest_filter_output(&highpass);
+	double lp_filtered_output_x = newest_filter_output(&lowpass_x);
+	double hp_filtered_output_x = newest_filter_output(&highpass_x);
 	
 	//complementary filter to get theta
-	sys_state.angle_about_x_axis = lp_filtered_output+hp_filtered_output + CAPE_MOUNT_ANGLE_X;
+	sys_state.angle_about_x_axis = (lp_filtered_output_x+hp_filtered_output_x + CAPE_MOUNT_ANGLE_X); //(0.98*orientation.x_gyro+0.02*orientation.x_accel);
 	
 	
 
-	// angle theta is positive in the direction of forward tip around X axis
+	
 	// find angle from accelerometer
-	y_orientation_from_accel = atan2(-1*data.accel[2],data.accel[0]);
+	orientation.y_accel = atan2(-1*data.accel[0],sqrt(pow(data.accel[2],2) + pow(data.accel[1],2)))*RAD_TO_DEG;
 
 	// integrates the gyroscope angle rate using Euler's method to get the angle
-	yangle = yangle + 0.01*data.gyro[0]*DEG_TO_RAD;
+	orientation.y_gyro = sys_state.angle_about_y_axis + 0.01*data.gyro[1];
 	
 	// filter angle data
-	double lp_y = march_filter(&lowpass, y_orientation_from_accel);
-	double hp_y = march_filter(&highpass, yangle);
+	double lp_y = march_filter(&lowpass_y, orientation.y_accel);
+	double hp_y = march_filter(&highpass_y, orientation.y_gyro);
 	
 	// get most recent filtered value
-	double lp_filtered_output_y = newest_filter_output(&lowpass);
-	double hp_filtered_output_y = newest_filter_output(&highpass);
+	double lp_filtered_output_y = newest_filter_output(&lowpass_y);
+	double hp_filtered_output_y = newest_filter_output(&highpass_y);
 	
 	//complementary filter to get theta
-	sys_state.angle_about_y_axis = lp_filtered_output_y+hp_filtered_output_y + CAPE_MOUNT_ANGLE_Y;
-	
+	sys_state.angle_about_y_axis = (lp_filtered_output_y+hp_filtered_output_y + CAPE_MOUNT_ANGLE_Y);
 	
 
-	// angle theta is positive in the direction of forward tip around X axis
-	// find angle from accelerometer
-	z_orientation_from_accel = atan2(data.accel[1],data.accel[0]);
 
-	// integrates the gyroscope angle rate using Euler's method to get the angle
-	zangle = zangle + 0.01*data.gyro[0]*DEG_TO_RAD;
-	
-	// filter angle data
-	double lp_z = march_filter(&lowpass, z_orientation_from_accel);
-	double hp_z = march_filter(&highpass, zangle);
-	
-	// get most recent filtered value
-	double lp_filtered_output_z = newest_filter_output(&lowpass);
-	double hp_filtered_output_z = newest_filter_output(&highpass);
-	
-	//complementary filter to get theta
-	sys_state.angle_about_z_axis = lp_filtered_output_z+hp_filtered_output_z + CAPE_MOUNT_ANGLE_Z;
-	
-	
 	//check for various exit conditions AFTER state estimate
 	
 	if(get_state() == EXITING){
@@ -332,6 +340,7 @@ int control_tilt(){
 *******************************************************************************/
 int zero_out_controller(){
 	//set all difference equation buffers to zero
+	/*
 	u1_buf0 =0;
 	u1_buf1=0;
 	u1_buf2=0;
@@ -345,7 +354,7 @@ int zero_out_controller(){
 
 	phiR_buf0=0;
 	phiR_buf1=0;
-	
+	*/
 	reference_value.theta = 0.0;
 	reference_value.phi   = 0.0;
 	set_motor_all(0);
@@ -396,12 +405,12 @@ void* printf_loop(void* ptr){
 		// check if this is the first time since being paused
 		if(new_state==RUNNING && last_state!=RUNNING){
 			printf("\nRUNNING\n");
-			printf("  Roll  |");
-			printf("  Roll Reference  |");
 			printf("  Pitch  |");
 			printf("  Pitch Reference  |");
-			printf("  Yaw  |");
-			printf("  Yaw Reference  |");
+			printf("  Roll  |");
+			printf("  Roll Reference  |");
+			//printf("  Yaw  |");
+			//printf("  Yaw Reference  |");
 			printf("  Battery Voltage  |");
 			printf("  Armstate  |");
 			printf("\n");
@@ -415,52 +424,50 @@ void* printf_loop(void* ptr){
 		if(new_state == RUNNING){	
 			printf("\r");
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
-			printf("%7.2f  |", reference_value.angle_about_x_axis_ref);
+			printf("%17.2f  |", reference_value.angle_about_x_axis_ref);
 
-			printf("%7.2f  |", sys_state.angle_about_y_axis);
-			printf("%7.2f  |", reference_value.angle_about_y_axis_ref);
+			printf("%6.2f  |", sys_state.angle_about_y_axis);
+			printf("%16.2f  |", reference_value.angle_about_y_axis_ref);
 
-			printf("%7.2f  |", sys_state.angle_about_y_axis);
-			printf("%7.2f  |", reference_value.angle_about_y_axis_ref);
+			//printf("%5.2f  |", sys_state.angle_about_z_axis);
+			//printf("%15.2f  |", reference_value.angle_about_y_axis_ref);
 
 			
-			printf("%7.2f  |", sys_state.battery_voltage);
+			printf("%17.2f  |", sys_state.battery_voltage);
 			
-			if(reference_value.armstate == ARMED) printf("  ARMED  |");
-			else printf("DISARMED |");
+			printf("%10.2d  |", reference_value.armstate);
 			fflush(stdout);
 		}
 		usleep(1000000 / PRINTF_HZ);
 	}
 	return NULL;
 }
-/*******************************************************************************
-* int wait_for_starting_condition()
-*
-* Check if in the right position before starting.
-*******************************************************************************/
-int wait_for_starting_condition(){
-	int checks = 0;
-	const int check_hz = 20;	// check 20 times per second
-	int checks_needed = round(START_DELAY*check_hz);
-	int wait_us = 1000000/check_hz; 
 
-	// exit if state becomes paused or exiting
-	while(get_state()==RUNNING){
-		// if within range, start counting
-		if(fabs(sys_state.theta) < START_ANGLE){
-			checks++;
-			// waited long enough, return
-			if(checks >= checks_needed) return 0;
-		}
-		// fell out of range, restart counter
-		else checks = 0;
+void* read_input(void* ptr){
+	while(get_state()!=EXITING){
+		sys_state.start_cond=1;
+
+		usleep(1000000 / GET_INPUT_HZ);
+	}
+	return NULL;
+}
+
+/*******************************************************************************
+* int is_flying()
+*
+* Checks if it should start controlling the motors
+*******************************************************************************/
+int is_flying(){
+	const int check_hz = 20;
+	int wait_us = 1000000/check_hz;
+	if(sys_state.start_cond == 1){
+		return 0;
+	}
+	else{
 		usleep(wait_us);
 	}
 	return -1;
 }
-
-
 /*******************************************************************************
 * int on_pause_pressed()
 *
@@ -485,5 +492,3 @@ int on_pause_released(){
 	else if(get_state()==PAUSED)	set_state(RUNNING);
 	return 0;
 }
-
-
