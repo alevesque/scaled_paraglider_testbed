@@ -1,5 +1,5 @@
 /*******************************************************************************
-* config.c
+* config.h
 *
 * Contains the settings struct for configuration of balance.c
 * Settings are contained here for neatness.
@@ -16,8 +16,8 @@
 
 // Structural properties of BBB
 
-#define 	CAPE_MOUNT_ANGLE_X		0//  0.35 for blUE
-#define 	CAPE_MOUNT_ANGLE_Y		0//  0.35 for blUE
+#define 	CAPE_MOUNT_ANGLE_X		M_PI/2//  0.35 for blUE
+#define 	CAPE_MOUNT_ANGLE_Y		M_PI/2//  0.35 for blUE
 #define 	CAPE_MOUNT_ANGLE_Z		0//  0.35 for blUE
 //#define 	GEARBOX 				35.577
 #define 	ENCODER_RES				60
@@ -54,7 +54,7 @@
 #define		BATTERY_CHECK_HZ		5
 #define 	REFERENCE_VALUE_MANAGER_HZ	100
 #define		PRINTF_HZ			50
-#define		SAMPLE_FREQ_OUTER		20
+#define		GET_INPUT_HZ		10
 // other
 #define 	TIP_ANGLE 			0.75
 #define 	START_ANGLE 			0.3	
