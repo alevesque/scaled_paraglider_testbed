@@ -25,7 +25,6 @@ typedef struct reference_value_t{ //setpoints
 	float left_pulley_angle_ref;
 	float angle_about_x_axis_ref; //body angle about x axis
 	float angle_about_y_axis_ref; //body angle about y axis
-	float angle_about_z_axis_ref; //body angle about z axis
 } reference_value_t;
 
 /*******************************************************************************
@@ -38,7 +37,6 @@ typedef struct core_state_t{
 	float left_pulley_angle;
 	float angle_about_x_axis; 		// body angle radians
 	float angle_about_y_axis; 		// body angle radians
-	float angle_about_z_axis; 		// body angle radians
 	float weightshift_dist;			//distance of weight from neutral position 
 	float battery_voltage; 		// battery voltage 
 	float u1;			// output of controller to weight shift
@@ -57,8 +55,6 @@ typedef struct orientation_t{
 	float x_accel;
 	float y_gyro;
 	float y_accel;
-	float z_gyro;
-	float z_accel;
 } orientation_t;
 
 
@@ -95,10 +91,6 @@ d_filter_t lowpass_x;
 d_filter_t highpass_x;
 d_filter_t lowpass_y;
 d_filter_t highpass_y;
-d_filter_t lowpass_z;
-d_filter_t highpass_z;
-
-
 
 /*******************************************************************************
 * main()
@@ -130,8 +122,6 @@ int main(){
 	highpass_x  = create_first_order_highpass(dt, tau);
 	lowpass_y  = create_first_order_lowpass(dt, tau);
 	highpass_y  = create_first_order_highpass(dt, tau);
-	lowpass_z  = create_first_order_lowpass(dt, tau);
-	highpass_z  = create_first_order_highpass(dt, tau);
 
 	// set up button handlers
 	set_pause_pressed_func(&on_pause_pressed);
@@ -154,13 +144,9 @@ int main(){
 	imu_config_t conf = get_default_imu_config();
 	conf.dmp_sample_rate = SAMPLE_RATE_HZ;
 	
-
-
 	//get orientation of beaglebone
 	conf.orientation = ORIENTATION_Z_UP;
 	
-
-
 	// start imu
 	if(initialize_imu_dmp(&data, conf)){
 		printf("ERROR: IMU initialization failed!\n");
@@ -177,8 +163,7 @@ int main(){
 	
 	//set imu interrupt function
 	set_imu_interrupt_func(&control_tilt);
-	
-	
+		
 	set_state(RUNNING);
 	set_led(RED,0);
 	set_led(GREEN,1);
@@ -193,8 +178,6 @@ int main(){
 	destroy_filter(&highpass_x);
 	destroy_filter(&lowpass_y);
 	destroy_filter(&highpass_y);
-	destroy_filter(&lowpass_z);
-	destroy_filter(&highpass_z);
 	power_off_imu();
 	cleanup_cape();
 	set_cpu_frequency(FREQ_ONDEMAND);
@@ -378,8 +361,6 @@ int arm_controller(){
 	return 0;
 }
 
-
-
 //thread to check battery voltage
 void* battery_checker(void* ptr){
 		float new_v;
@@ -409,8 +390,6 @@ void* printf_loop(void* ptr){
 			printf("  Pitch Reference  |");
 			printf("  Roll  |");
 			printf("  Roll Reference  |");
-			//printf("  Yaw  |");
-			//printf("  Yaw Reference  |");
 			printf("  Battery Voltage  |");
 			printf("  Armstate  |");
 			printf("\n");
@@ -428,10 +407,6 @@ void* printf_loop(void* ptr){
 
 			printf("%6.2f  |", sys_state.angle_about_y_axis);
 			printf("%16.2f  |", reference_value.angle_about_y_axis_ref);
-
-			//printf("%5.2f  |", sys_state.angle_about_z_axis);
-			//printf("%15.2f  |", reference_value.angle_about_y_axis_ref);
-
 			
 			printf("%17.2f  |", sys_state.battery_voltage);
 			
@@ -445,7 +420,7 @@ void* printf_loop(void* ptr){
 
 void* read_input(void* ptr){
 	while(get_state()!=EXITING){
-		sys_state.start_cond=1;
+		sys_state.start_cond=1; //temporary until implement user input
 
 		usleep(1000000 / GET_INPUT_HZ);
 	}
