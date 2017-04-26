@@ -83,14 +83,14 @@ int on_pause_released();
 *******************************************************************************/
 core_state_t sys_state;
 reference_value_t reference_value;
-imu_data_t data;
+rc_imu_data_t data;
 orientation_t orientation;
 
 //create filters
-d_filter_t lowpass_x;
-d_filter_t highpass_x;
-d_filter_t lowpass_y;
-d_filter_t highpass_y;
+rc_filter_t lowpass_x;
+rc_filter_t highpass_x;
+rc_filter_t lowpass_y;
+rc_filter_t highpass_y;
 
 /*******************************************************************************
 * main()
@@ -98,13 +98,13 @@ d_filter_t highpass_y;
 * Initialize the filters, IMU, threads, & wait until shut down
 *******************************************************************************/
 int main(){
-	set_cpu_frequency(FREQ_1000MHZ);
+	rc_set_cpu_freq(FREQ_1000MHZ);
 
-	if(initialize_cape()<0){
+	if(rc_initialize()<0){
 		printf("ERROR: failed to initialize cape!\n");
 		return -1;
 	}
-	set_state(UNINITIALIZED);
+	rc_set_state(UNINITIALIZED);
 
 
 	// make sure reference_value starts at normal values
@@ -118,14 +118,14 @@ int main(){
 	float const tau = tr/2.2;
 
 	//set up filters for finding theta from sensors
-	lowpass_x  = create_first_order_lowpass(dt, tau);
-	highpass_x  = create_first_order_highpass(dt, tau);
-	lowpass_y  = create_first_order_lowpass(dt, tau);
-	highpass_y  = create_first_order_highpass(dt, tau);
+	lowpass_x  = rc_first_order_lowpass(dt, tau);
+	highpass_x  = rc_first_order_highpass(dt, tau);
+	lowpass_y  = rc_first_order_lowpass(dt, tau);
+	highpass_y  = rc_first_order_highpass(dt, tau);
 
 	// set up button handlers
-	set_pause_pressed_func(&on_pause_pressed);
-	set_mode_released_func(&on_pause_released);
+	rc_set_pause_pressed_func(&on_pause_pressed);
+	rc_set_mode_released_func(&on_pause_released);
 	
 	// start a thread to slowly sample battery 
 	pthread_t battery_thread;
