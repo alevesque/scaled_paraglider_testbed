@@ -162,25 +162,26 @@ int main(){
 	pthread_create(&read_input_thread, NULL, read_input, (void*) NULL);
 	
 	//set imu interrupt function
-	set_imu_interrupt_func(&control_tilt);
+	rc_set_imu_interrupt_func(&control_tilt);
 		
-	set_state(RUNNING);
-	set_led(RED,0);
-	set_led(GREEN,1);
+	rc_set_state(RUNNING);
+	rc_set_led(RED,0);
+	rc_set_led(GREEN,1);
 	
 	//wait while stuff is going on
-	while(get_state()!=EXITING){
-		usleep(10000);
+	while(rc_get_state()!=EXITING){
+		rc_usleep(10000);
 	}
 	
-	//cleanup
-	destroy_filter(&lowpass_x);
-	destroy_filter(&highpass_x);
-	destroy_filter(&lowpass_y);
-	destroy_filter(&highpass_y);
-	power_off_imu();
-	cleanup_cape();
-	set_cpu_frequency(FREQ_ONDEMAND);
+	//cleanup memory
+	rc_free_filter(&lowpass_x);
+	rc_free_filter(&highpass_x);
+	rc_free_filter(&lowpass_y);
+	rc_free_filter(&highpass_y);
+	rc_power_off_imu();
+	rc_set_cpu_freq(FREQ_ONDEMAND);
+	rc_cleanup();
+	
 	return 0;
 }
 
@@ -193,14 +194,14 @@ int main(){
 void* reference_value_manager(void* ptr){
 	// wait for IMU to settle
 	disarm_controller();
-	usleep(2500000);
+	rc_usleep(2500000);
 		
-	while(get_state()!=EXITING){
+	while(rc_get_state()!=EXITING){
 		// sleep at beginning of loop so we can use the 'continue' statement
-		usleep(1000000/REFERENCE_VALUE_MANAGER_HZ); 
+		rc_usleep(1000000/REFERENCE_VALUE_MANAGER_HZ); 
 		
 		// nothing to do if paused, go back to beginning of loop
-		if(get_state() != RUNNING) continue;
+		if(rc_get_state() != RUNNING) continue;
 
 		// if we got here the state is RUNNING, but controller is not
 		// necessarily armed. If DISARMED, wait for the user to send start signal
@@ -240,12 +241,12 @@ int control_tilt(){
 	orientation.x_gyro = sys_state.angle_about_x_axis + 0.01*data.gyro[0];
 	
 	// filter angle data
-	double lp_x = march_filter(&lowpass_x, orientation.x_accel);
-	double hp_x = march_filter(&highpass_x, orientation.x_gyro);
+	double lp_x = rc_march_filter(&lowpass_x, orientation.x_accel);
+	double hp_x = rc_march_filter(&highpass_x, orientation.x_gyro);
 	
 	// get most recent filtered value
-	double lp_filtered_output_x = newest_filter_output(&lowpass_x);
-	double hp_filtered_output_x = newest_filter_output(&highpass_x);
+	double lp_filtered_output_x = rc_newest_filter_output(&lowpass_x);
+	double hp_filtered_output_x = rc_newest_filter_output(&highpass_x);
 	
 	//complementary filter to get theta
 	sys_state.angle_about_x_axis = (lp_filtered_output_x+hp_filtered_output_x + CAPE_MOUNT_ANGLE_X); //(0.98*orientation.x_gyro+0.02*orientation.x_accel);
@@ -260,12 +261,12 @@ int control_tilt(){
 	orientation.y_gyro = sys_state.angle_about_y_axis + 0.01*data.gyro[1];
 	
 	// filter angle data
-	double lp_y = march_filter(&lowpass_y, orientation.y_accel);
-	double hp_y = march_filter(&highpass_y, orientation.y_gyro);
+	double lp_y = rc_march_filter(&lowpass_y, orientation.y_accel);
+	double hp_y = rc_march_filter(&highpass_y, orientation.y_gyro);
 	
 	// get most recent filtered value
-	double lp_filtered_output_y = newest_filter_output(&lowpass_y);
-	double hp_filtered_output_y = newest_filter_output(&highpass_y);
+	double lp_filtered_output_y = rc_newest_filter_output(&lowpass_y);
+	double hp_filtered_output_y = rc_newest_filter_output(&highpass_y);
 	
 	//complementary filter to get theta
 	sys_state.angle_about_y_axis = (lp_filtered_output_y+hp_filtered_output_y + CAPE_MOUNT_ANGLE_Y);
@@ -274,12 +275,12 @@ int control_tilt(){
 
 	//check for various exit conditions AFTER state estimate
 	
-	if(get_state() == EXITING){
-		disable_motors();
+	if(rc_get_state() == EXITING){
+		rc_disable_motors();
 		return 0;
 	}
 	// if controller is still ARMED while state is PAUSED, disarm it
-	if(get_state()!=RUNNING && reference_value.armstate==ARMED){
+	if(rc_get_state()!=RUNNING && reference_value.armstate==ARMED){
 		disarm_controller();
 		return 0;
 	}
@@ -340,13 +341,13 @@ int zero_out_controller(){
 	*/
 	reference_value.theta = 0.0;
 	reference_value.phi   = 0.0;
-	set_motor_all(0);
+	rc_set_motor_all(0);
 	return 0;
 }
 
 //disable motors in case something happens
 int disarm_controller(){
-	disable_motors();
+	rc_disable_motors();
 	reference_value.armstate = DISARMED;
 	return 0;
 }
@@ -354,22 +355,22 @@ int disarm_controller(){
 //turn the encoders and motors on and initialize their values
 int arm_controller(){
 	zero_out_controller();
-	set_encoder_pos(ENCODER_CHANNEL_L,0);
-	set_encoder_pos(ENCODER_CHANNEL_R,0);
+	rc_set_encoder_pos(ENCODER_CHANNEL_L,0);
+	rc_set_encoder_pos(ENCODER_CHANNEL_R,0);
 	reference_value.armstate = ARMED;
-	enable_motors();
+	rc_enable_motors();
 	return 0;
 }
 
 //thread to check battery voltage
 void* battery_checker(void* ptr){
 		float new_v;
-		while(get_state()!=EXITING){
-			new_v = get_battery_voltage();
+		while(rc_get_state()!=EXITING){
+			new_v = rc_battery_voltage();
 			// if the value doesn't make sense, use nominal voltage
 			if (new_v>9.0 || new_v<5.0) new_v = V_NOMINAL;
 			sys_state.battery_voltage = new_v;
-			usleep(1000000 / BATTERY_CHECK_HZ);
+			rc_usleep(1000000 / BATTERY_CHECK_HZ);
 		}
 		return NULL;
 	}
@@ -381,8 +382,8 @@ void* battery_checker(void* ptr){
 *******************************************************************************/
 void* printf_loop(void* ptr){
 	state_t last_state, new_state; // keep track of last state 
-	while(get_state()!=EXITING){
-		new_state = get_state();
+	while(rc_get_state()!=EXITING){
+		new_state = rc_get_state();
 		// check if this is the first time since being paused
 		if(new_state==RUNNING && last_state!=RUNNING){
 			printf("\nRUNNING\n");
@@ -413,16 +414,16 @@ void* printf_loop(void* ptr){
 			printf("%10.2d  |", reference_value.armstate);
 			fflush(stdout);
 		}
-		usleep(1000000 / PRINTF_HZ);
+		rc_usleep(1000000 / PRINTF_HZ);
 	}
 	return NULL;
 }
 
 void* read_input(void* ptr){
-	while(get_state()!=EXITING){
+	while(rc_get_state()!=EXITING){
 		sys_state.start_cond=1; //temporary until implement user input
 
-		usleep(1000000 / GET_INPUT_HZ);
+		rc_usleep(1000000 / GET_INPUT_HZ);
 	}
 	return NULL;
 }
@@ -439,7 +440,7 @@ int is_flying(){
 		return 0;
 	}
 	else{
-		usleep(wait_us);
+		rc_usleep(wait_us);
 	}
 	return -1;
 }
@@ -454,16 +455,16 @@ int on_pause_pressed(){
 	const int us_wait = 1000000; // 1 second
 	// now keep checking to see if the button is still held down
 	for(i=0;i<samples;i++){
-		usleep(us_wait/samples);
-		if(get_pause_button() == RELEASED) return 0;
+		rc_usleep(us_wait/samples);
+		if(rc_get_pause_button() == RELEASED) return 0;
 	}
 	printf("Shutting down...\n");
-	set_state(EXITING);
+	rc_set_state(EXITING);
 	return 0;
 }
 int on_pause_released(){
 	// toggle betewen paused and running modes
-	if(get_state()==RUNNING)   		set_state(PAUSED);
-	else if(get_state()==PAUSED)	set_state(RUNNING);
+	if(rc_get_state()==RUNNING)   		rc_set_state(PAUSED);
+	else if(rc_get_state()==PAUSED)	rc_set_state(RUNNING);
 	return 0;
 }
