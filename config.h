@@ -23,8 +23,11 @@
 
 // electrical hookups
 #define 	WS_MOTOR_CHANNEL 			3
+#define   WS_MOTOR_DIR_PIN      3
 #define 	BL_MOTOR_CHANNEL_L 			4
+#define   BL_MOTOR_DIR_PIN_L      4
 #define 	BL_MOTOR_CHANNEL_R 			1
+#define   BL_MOTOR_DIR_PIN_R      1
 #define 	BL_MOTOR_POLARITY_L 		1
 #define 	BL_MOTOR_POLARITY_R 		-1
 
