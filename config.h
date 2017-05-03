@@ -15,7 +15,7 @@
 
 
 // Structural properties of BBB
-
+#define     STEPS_PER_WS_ANGLE_DEGREE   16
 #define 	CAPE_MOUNT_ANGLE_X			M_PI/2
 #define 	CAPE_MOUNT_ANGLE_Y			M_PI/2
 #define 	CAPE_MOUNT_ANGLE_Z			0
@@ -38,10 +38,9 @@
 
 // Thread Loop Rates
 #define		BATTERY_CHECK_HZ			5
-#define 	REFERENCE_VALUE_MANAGER_HZ	100
+#define 	CONTROLLER_ARMING_MANAGER_HZ	100
 #define		PRINTF_HZ					50
 #define		READ_INPUT_HZ				10
-#define		CHECK_RADIO_SIGNAL_HZ 		10
 // other
 
 
