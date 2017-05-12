@@ -41,7 +41,11 @@
 #define 	CONTROLLER_ARMING_MANAGER_HZ	100
 #define		PRINTF_HZ					50
 #define		READ_INPUT_HZ				10
-// other
+
+// PID Parameters
+#define K_P 1
+#define K_I 1
+#define K_D 1
 
 
 #endif //BALANCE_CONFIG
