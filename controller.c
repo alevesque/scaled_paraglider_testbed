@@ -1,7 +1,7 @@
-#include <usefulincludes.h>
+#include <rc_usefulincludes.h>
 #include <roboticscape.h>
 #include "config.h"
-
+#include "ale_helpful_fns.h"
 /*******************************************************************************
 * armstate_t
 *
@@ -13,19 +13,14 @@ typedef enum armstate_t{
 } armstate_t;
 
 /*******************************************************************************
-* reference_value_t
+* controller_arming_t
 *	
-* Controller reference_value written to by reference_value_manager and read by the controller.
+* Controller arming state written to by controller_arming_manager and read by the controller.
 *******************************************************************************/
-typedef struct reference_value_t{ //setpoints
+typedef struct controller_arming_t{ //setpoints
 	armstate_t armstate;	// see armstate_t declaration
-	float theta;			// body lean angle (rad)
-	float phi;				// wheel position (rad)
-	float right_pulley_angle_ref;	// pulley rotation
-	float left_pulley_angle_ref;
-	float angle_about_x_axis_ref; //body angle about x axis
-	float angle_about_y_axis_ref; //body angle about y axis
-} reference_value_t;
+	int motor_on;
+} controller_arming_t;
 
 /*******************************************************************************
 * core_state_t
@@ -37,12 +32,11 @@ typedef struct core_state_t{
 	float left_pulley_angle;
 	float angle_about_x_axis; 		// body angle radians
 	float angle_about_y_axis; 		// body angle radians
-	float weightshift_dist;			//distance of weight from neutral position 
+	float weightshift_dist;			//distance of weight from neutral position -- need to know how to read, wait on physical implementation
 	float battery_voltage; 		// battery voltage 
-	float u1;			// output of controller to weight shift
-	float u2_left;			// output of controller to pulley motors
-	float u2_right;
-	int start_cond;
+	float WS_duty_signal;			// output of controller to weight shift
+	float BL_duty_signal_left;			// output of controller to pulley motors
+	float BL_duty_signal_right;
 } core_state_t;
 
 /*******************************************************************************
@@ -62,43 +56,53 @@ typedef struct orientation_t{
 * Local Function declarations	
 *******************************************************************************/
 // IMU interrupt routine
-int control_tilt();
+void collect_data();
 
 // threads
-void* reference_value_manager(void* ptr);
+void* controller_arming_manager(void* ptr);
 void* battery_checker(void* ptr);
 void* printf_loop(void* ptr);
 void* read_input(void* ptr);
 
+
 // regular functions
-int is_flying();
+int print_usage();
+int motor_output();
 int zero_out_controller();
 int disarm_controller();
 int arm_controller();
-int on_pause_pressed();
-int on_pause_released();
+int cleanup_everything();
+void on_pause_pressed();
+void on_pause_released();
+
 
 /*******************************************************************************
 * Global Variables				
 *******************************************************************************/
 core_state_t sys_state;
-reference_value_t reference_value;
+controller_arming_t controller_arming;
 rc_imu_data_t data;
 orientation_t orientation;
 
-//create filters
-rc_filter_t lowpass_x;
-rc_filter_t highpass_x;
-rc_filter_t lowpass_y;
-rc_filter_t highpass_y;
+rc_filter_t lowpass_x_filt;
+rc_filter_t lowpass_y_filt;
+rc_filter_t highpass_x_filt;
+rc_filter_t highpass_y_filt;
+
+
+
 
 /*******************************************************************************
 * main()
 *
-* Initialize the filters, IMU, threads, & wait until shut down
+* Initialize the filters, IMU, DSM, threads, & wait until shut down
 *******************************************************************************/
 int main(){
-	rc_set_cpu_freq(FREQ_1000MHZ);
+
+	/*****************************************
+	* Begin initializing
+	*****************************************/
+	//rc_set_cpu_freq(FREQ_1000MHZ);
 
 	if(rc_initialize()<0){
 		printf("ERROR: failed to initialize cape!\n");
@@ -106,99 +110,138 @@ int main(){
 	}
 	rc_set_state(UNINITIALIZED);
 
+	rc_imu_config_t conf = rc_default_imu_config();
 
-	// make sure reference_value starts at normal values
-	reference_value.armstate = DISARMED;
-		
+	// make sure controller_arming starts at normal values
+	controller_arming.armstate = DISARMED;
+
+	/****************************************/
+
+
+
+	/******************************************
+	* Set up filters for data gathering.
+	******************************************/	
+	//create empty filters
+	lowpass_x_filt  = rc_empty_filter();
+	highpass_x_filt  = rc_empty_filter();
+	lowpass_y_filt  = rc_empty_filter();
+	highpass_y_filt  = rc_empty_filter();
+	
 	//timestep, dt
 	double const dt = 1.0/(float)SAMPLE_RATE_HZ;
-	//rise time, tr **********************************************find new rise time if needed, prob need for high pass cuz noisy************************
+	//rise time, tr 
 	double const tr = 1;
 	//time constant from rise time
 	float const tau = tr/2.2;
 
 	//set up filters for finding theta from sensors
-	lowpass_x  = rc_first_order_lowpass(dt, tau);
-	highpass_x  = rc_first_order_highpass(dt, tau);
-	lowpass_y  = rc_first_order_lowpass(dt, tau);
-	highpass_y  = rc_first_order_highpass(dt, tau);
+	rc_first_order_lowpass(&lowpass_x_filt,dt, tau);
+	rc_first_order_highpass(&highpass_x_filt,dt, tau);
+	rc_first_order_lowpass(&lowpass_y_filt,dt, tau);
+	rc_first_order_highpass(&highpass_y_filt,dt, tau);
+	
+	/***********************/
+
+
 
 	// set up button handlers
 	rc_set_pause_pressed_func(&on_pause_pressed);
 	rc_set_mode_released_func(&on_pause_released);
 	
+	
+	//can use gps header for gpio if needed, where WS_MOTOR_CHANNEL is the gpio pin #
+	//rc_gpio_set_dir(WS_MOTOR_CHANNEL, OUTPUT_PIN);
+	//rc_set_pinmux_mode(WS_MOTOR_CHANNEL, PINMUX_PWM);
+
+	
+
+
 	// start a thread to slowly sample battery 
 	pthread_t battery_thread;
 	pthread_create(&battery_thread, NULL, battery_checker, (void*) NULL);
 	// wait for the battery thread to make the first read
-	while(sys_state.battery_voltage==0 && get_state()!=EXITING) usleep(1000);
+	while(sys_state.battery_voltage==0 && rc_get_state()!=EXITING) usleep(1000);
 	
-	// start printf_thread if running from a terminal
-	// if it was started as a background process then don't bother
-	if(isatty(fileno(stdout))){
-		pthread_t  printf_thread;
-		pthread_create(&printf_thread, NULL, printf_loop, (void*) NULL);
-	}
+	
 	
 	// set up IMU configuration
-	imu_config_t conf = get_default_imu_config();
 	conf.dmp_sample_rate = SAMPLE_RATE_HZ;
 	
-	//get orientation of beaglebone
+	//set orientation of beaglebone
 	conf.orientation = ORIENTATION_Z_UP;
 	
 	// start imu
-	if(initialize_imu_dmp(&data, conf)){
+	if(rc_initialize_imu_dmp(&data, conf)){
 		printf("ERROR: IMU initialization failed!\n");
 		return -1;
 	}
-	
-	// start stack to control reference_values
-	pthread_t reference_value_thread;
-	pthread_create(&reference_value_thread, NULL, reference_value_manager, (void*) NULL);
+
+
+	// start thread to control arming/disarming controller.
+	pthread_t controller_arming_thread;
+	pthread_create(&controller_arming_thread, NULL, controller_arming_manager, (void*) NULL);
+
 
 	//start thread for reading user input
 	pthread_t read_input_thread;
 	pthread_create(&read_input_thread, NULL, read_input, (void*) NULL);
 	
 	//set imu interrupt function
-	rc_set_imu_interrupt_func(&control_tilt);
+	rc_set_imu_interrupt_func(&collect_data);
 		
 	rc_set_state(RUNNING);
 	rc_set_led(RED,0);
 	rc_set_led(GREEN,1);
 	
+	printf("@-----------------------------@\n");
+	printf("| Paraglider Control Software |\n");
+	printf("@-----------------------------@\n\n");
 	//wait while stuff is going on
 	while(rc_get_state()!=EXITING){
 		rc_usleep(10000);
 	}
 	
-	//cleanup memory
-	rc_free_filter(&lowpass_x);
-	rc_free_filter(&highpass_x);
-	rc_free_filter(&lowpass_y);
-	rc_free_filter(&highpass_y);
-	rc_power_off_imu();
-	rc_set_cpu_freq(FREQ_ONDEMAND);
-	rc_cleanup();
+
+
+	//now exiting
+	cleanup_everything();
 	
 	return 0;
 }
 
 
+
 /*******************************************************************************
-* void* reference_value_manager(void* ptr)
+* void* controller_arming_manager(void* ptr)
 *
 * Detects start conditions to control arming the controller.
 *******************************************************************************/
-void* reference_value_manager(void* ptr){
-	// wait for IMU to settle
+int cleanup_everything(){
+	//cleanup memory
+	rc_free_filter(&lowpass_x_filt);
+	rc_free_filter(&highpass_x_filt);
+	rc_free_filter(&lowpass_y_filt);
+	rc_free_filter(&highpass_y_filt);
+	rc_power_off_imu();
+	//rc_set_cpu_freq(FREQ_ONDEMAND);
+	rc_cleanup();
+	return 0;
+}
+
+/*******************************************************************************
+* void* controller_arming_manager(void* ptr)
+*
+* Detects start conditions to control arming the controller.
+*******************************************************************************/
+void* controller_arming_manager(void* ptr){
+	
 	disarm_controller();
 	rc_usleep(2500000);
 		
 	while(rc_get_state()!=EXITING){
 		// sleep at beginning of loop so we can use the 'continue' statement
-		rc_usleep(1000000/REFERENCE_VALUE_MANAGER_HZ); 
+		rc_usleep(1000000/CONTROLLER_ARMING_MANAGER_HZ); 
 		
 		// nothing to do if paused, go back to beginning of loop
 		if(rc_get_state() != RUNNING) continue;
@@ -206,15 +249,11 @@ void* reference_value_manager(void* ptr){
 		// if we got here the state is RUNNING, but controller is not
 		// necessarily armed. If DISARMED, wait for the user to send start signal
 		// which will we detected by is_flying()
-		if(reference_value.armstate == DISARMED){
-			if(is_flying()==0){
+		if(controller_arming.armstate == DISARMED){
 				zero_out_controller();
-				arm_controller();
-			} 
-			else continue;
-		}
-	
-		
+				arm_controller(); 
+			}
+			else continue;		
 	}
 
 	// if state becomes EXITING the above loop exists and we disarm here
@@ -223,17 +262,17 @@ void* reference_value_manager(void* ptr){
 }
 
 /*******************************************************************************
-* int control_tilt()
+* void collect_data()
 *
-* Finds orientation from sensors and sends signal to motors to meet setpoint
+* Finds orientation from sensors.
 *******************************************************************************/
-int control_tilt(){
+void collect_data(){
 
-	//brake line motor duty cycles
-	float left_pulley_duty_cycle, right_pulley_duty_cycle;
-	//weight shift motor duty cycle
-	float ws_duty;
-	
+
+
+	/*****************************************
+	* Find Pitch Data
+	*****************************************/
 	// find angle from accelerometer
 	orientation.x_accel = atan2(-1*data.accel[1],sqrt(pow(data.accel[2],2) + pow(data.accel[0],2)))*RAD_TO_DEG;
 
@@ -241,19 +280,22 @@ int control_tilt(){
 	orientation.x_gyro = sys_state.angle_about_x_axis + 0.01*data.gyro[0];
 	
 	// filter angle data
-	double lp_x = rc_march_filter(&lowpass_x, orientation.x_accel);
-	double hp_x = rc_march_filter(&highpass_x, orientation.x_gyro);
+	double lp_filtered_output_x = rc_march_filter(&lowpass_x_filt, orientation.x_accel);
+	double hp_filtered_output_x = rc_march_filter(&highpass_x_filt, orientation.x_gyro);
 	
 	// get most recent filtered value
-	double lp_filtered_output_x = rc_newest_filter_output(&lowpass_x);
-	double hp_filtered_output_x = rc_newest_filter_output(&highpass_x);
+	//double lp_filtered_output_ x= rc_newest_filter_output(&lowpass_x_filt);
+	//double hp_filtered_output_x = rc_newest_filter_output(&highpass_x_filt);
 	
-	//complementary filter to get theta
+	//complementary filter to get pitch angle
 	sys_state.angle_about_x_axis = (lp_filtered_output_x+hp_filtered_output_x + CAPE_MOUNT_ANGLE_X); //(0.98*orientation.x_gyro+0.02*orientation.x_accel);
 	
+	/*****************************************/
 	
 
-	
+	/*****************************************
+	* Find Roll Data
+	*****************************************/
 	// find angle from accelerometer
 	orientation.y_accel = atan2(-1*data.accel[0],sqrt(pow(data.accel[2],2) + pow(data.accel[1],2)))*RAD_TO_DEG;
 
@@ -261,60 +303,36 @@ int control_tilt(){
 	orientation.y_gyro = sys_state.angle_about_y_axis + 0.01*data.gyro[1];
 	
 	// filter angle data
-	double lp_y = rc_march_filter(&lowpass_y, orientation.y_accel);
-	double hp_y = rc_march_filter(&highpass_y, orientation.y_gyro);
+	double lp_filtered_output_y= rc_march_filter(&lowpass_y_filt, orientation.y_accel);
+	double hp_filtered_output_y = rc_march_filter(&highpass_y_filt, orientation.y_gyro);
 	
 	// get most recent filtered value
-	double lp_filtered_output_y = rc_newest_filter_output(&lowpass_y);
-	double hp_filtered_output_y = rc_newest_filter_output(&highpass_y);
+	//double lp_filtered_output_y = rc_newest_filter_output(&lowpass_y_filt);
+	//double hp_filtered_output_y = rc_newest_filter_output(&highpass_y_filt);
 	
-	//complementary filter to get theta
+	//complementary filter to get pitch angle
 	sys_state.angle_about_y_axis = (lp_filtered_output_y+hp_filtered_output_y + CAPE_MOUNT_ANGLE_Y);
 	
-
+	/****************************************/
 
 	//check for various exit conditions AFTER state estimate
 	
 	if(rc_get_state() == EXITING){
+		//rc_disable_servo_power_rail()
 		rc_disable_motors();
-		return 0;
+		return;
 	}
 	// if controller is still ARMED while state is PAUSED, disarm it
-	if(rc_get_state()!=RUNNING && reference_value.armstate==ARMED){
+	if(rc_get_state()!=RUNNING && controller_arming.armstate==ARMED){
 		disarm_controller();
-		return 0;
+		return;
 	}
 	// exit if the controller is disarmed
-	if(reference_value.armstate==DISARMED){
-		return 0;
+	if(controller_arming.armstate==DISARMED){
+		return;
 	}
 	
-	/* //example of how to implement duty cycle
-	//gain of difference equation, adjusted by battery voltage
-	double K = -7 * V_NOMINAL/sys_state.battery_voltage;
-	double u1n;
-
-	//difference function for u1[n], D1(s) output is motor duty value
-	u1n=1.997*u1_buf1-0.9965*u1_buf2+1*thetaR_buf0*K-2*0.99965*thetaR_buf1*K+0.99965*0.99965*thetaR_buf2*K;
-	
-	//normalize duty cycle - this part might be wrong, maybe if > vmax {v=vmax} and if < vmin {v=vmin}******
-	u1n = u1n/V_NOMINAL;
-	
-	//buffer u1 values for use in difference functions
-	u1_buf2 = u1_buf1;
-	u1_buf1 = u1_buf0;
-	u1_buf0 = u1n;
-
-	//set u state to u1[n]
-	sys_state.u1 = u1n;
-		
-	//Send signal to motors
-	left_duty_cycle = sys_state.u1;
-	right_duty_cycle = sys_state.u1;	
-	set_motor(MOTOR_CHANNEL_L, MOTOR_POLARITY_L * left_duty_cycle); 
-	set_motor(MOTOR_CHANNEL_R, MOTOR_POLARITY_R * right_duty_cycle); 
-	*/
-	return 0;
+	return;
 }
 
 /*******************************************************************************
@@ -323,46 +341,41 @@ int control_tilt(){
 * Sets all controller values to zero.
 *******************************************************************************/
 int zero_out_controller(){
-	//set all difference equation buffers to zero
-	/*
-	u1_buf0 =0;
-	u1_buf1=0;
-	u1_buf2=0;
-
-	thetaR_buf0=0;
-	thetaR_buf1=0;
-	thetaR_buf2=0;
-
-	u2_buf0=0;
-	u2_buf1=0;
-
-	phiR_buf0=0;
-	phiR_buf1=0;
-	*/
-	reference_value.theta = 0.0;
-	reference_value.phi   = 0.0;
 	rc_set_motor_all(0);
 	return 0;
 }
 
-//disable motors in case something happens
-int disarm_controller(){
-	rc_disable_motors();
-	reference_value.armstate = DISARMED;
-	return 0;
-}
-
-//turn the encoders and motors on and initialize their values
+/*******************************************************************************
+* int arm_controller()
+*
+* Turns the motors on and initialize their values.
+*******************************************************************************/
 int arm_controller(){
 	zero_out_controller();
-	rc_set_encoder_pos(ENCODER_CHANNEL_L,0);
-	rc_set_encoder_pos(ENCODER_CHANNEL_R,0);
-	reference_value.armstate = ARMED;
+	controller_arming.armstate = ARMED;
 	rc_enable_motors();
+
+	//can also use servo rails if needed
+	// rc_enable_servo_power_rail();
 	return 0;
 }
 
-//thread to check battery voltage
+/*******************************************************************************
+* int disarm_controller()
+*
+* Disable motors in case something happens.
+*******************************************************************************/
+int disarm_controller(){
+	rc_disable_motors();
+	controller_arming.armstate = DISARMED;
+	return 0;
+}
+
+/*******************************************************************************
+* void* battery_checker(void* ptr)
+*
+* Checks battery voltage to ensure it's normal.
+*******************************************************************************/
 void* battery_checker(void* ptr){
 		float new_v;
 		while(rc_get_state()!=EXITING){
@@ -376,21 +389,145 @@ void* battery_checker(void* ptr){
 	}
 
 /*******************************************************************************
+* int motor_output()
+*
+* Outputs duty cycle to motors based on number of steps.
+*******************************************************************************/
+int motor_output(){
+	if (controller_arming.motor_on == 1){
+	
+		if(sys_state.WS_duty_signal<0){
+			rc_gpio_set_value_mmap(WS_MOTOR_DIR_PIN,LOW);
+		}
+		else{
+			rc_gpio_set_value_mmap(WS_MOTOR_DIR_PIN,HIGH);
+		}
+		int steps;
+		for(steps=0;steps<sys_state.WS_duty_signal;steps++){ //maybe need <=
+		rc_gpio_set_value_mmap(WS_MOTOR_CHANNEL,HIGH);
+		rc_usleep(150);
+		rc_gpio_set_value_mmap(WS_MOTOR_CHANNEL,LOW);
+		rc_usleep(400);
+		}
+	}
+	else{
+		return -1;
+		printf("Error! Attempt to control unarmed motors\n");
+	}
+	controller_arming.motor_on = 0;
+	return 0;
+}
+/*******************************************************************************
+* void* read_input(void* ptr)
+*
+* Reads user input from command line.
+*******************************************************************************/
+void* read_input(void* ptr){
+
+	//thread for printing data to screen
+	pthread_t  printf_thread;
+	printf("Enter command ('help' for command list): \n");
+
+	while(rc_get_state()!=EXITING){		
+
+		char c[21]; //user input array
+		char c_trimmed[21]; //cleaned up user input array
+
+		//read input from keyboard
+		if (fgets(c,20,stdin) != NULL){ //if there is input:
+			strcpy(c_trimmed,trimwhitespace(c)); //delete trailing and leading whitespace
+			if (c_trimmed[0] != '\n' && c_trimmed[0] != '\0'){ //if what is left is not a newline or NULL
+				
+				char *command,*command_opt;
+								
+				command = strtok(c_trimmed," "); //break input into format 'COMMMAND OPTION'
+				command_opt = strtok(NULL," ");
+
+				
+				
+
+				if(!strcmp(command,"display")){ //if COMMAND is 'display':
+					if(command_opt != NULL){ //and if there is an OPTION specified
+						if(!strcmp(command_opt,"exit")){ //and that option is to exit
+							
+							pthread_cancel(printf_thread); //exit display thread
+						}
+						else{
+							print_usage(); //otherwise show correct command syntax
+						}
+					}
+					
+					//if there isn't OPTION specified:
+					//start printf_thread if running from a terminal
+					//if it was started as a background process then don't bother
+					else if(isatty(fileno(stdout))){ 
+						pthread_create(&printf_thread, NULL, printf_loop, (void*) NULL);
+						pthread_detach(printf_thread);  //detach thread so it can be closed easier. 
+														//fine to do since it doesn't need to do anything except display stuff on screen
+					}
+				}
+				else if(!strcmp(command,"drive")){ //if COMMAND is 'drive'
+					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
+					if(command_opt != NULL){ //if there is an arguement passed
+						controller_arming.motor_on = 1; //arm motors
+						sys_state.WS_duty_signal = STEPS_PER_WS_ANGLE_DEGREE*atoi(command_opt); //send # of steps to motor_output()
+						motor_output(); //drive motors
+					}
+					else{
+						printf("Invalid command.\n");
+						print_usage(); //otherwise show correct command syntax
+					}
+				}
+				else if (!strcmp(command,"exit")){
+					cleanup_everything();
+				}
+				else if (!strcmp(command,"help")){
+					print_usage();
+				}
+				else{
+					printf("Invalid command.\n");
+					print_usage();
+				}
+		
+			}
+		}
+
+		//signal PWM duty to motor driver
+		//rc_set_motor(WS_MOTOR_CHANNEL, sys_state.WS_duty_signal); 
+		//rc_set_motor(BL_MOTOR_CHANNEL_L, BL_MOTOR_POLARITY_L * sys_state.BL_duty_signal_left); 
+		//rc_set_motor(BL_MOTOR_CHANNEL_R, BL_MOTOR_POLARITY_R * sys_state.BL_duty_signal_right); 
+
+		//can use servo rails maybe
+		//need to map duty cycle to us pulse width (NOT MODULATED BY FREQ, different from PWM)
+		//rc_send_servo_pulse_us(WS_MOTOR_CHANNEL, int us)
+
+		//or gps headers as gpio
+		//create thread with freq of pwm? where toggles high/low
+		//rc_gpio_set_value(WS_MOTOR_CHANNEL, HIGH);
+
+		rc_usleep(1000000 / READ_INPUT_HZ);
+	}
+	return NULL;
+}
+
+
+/*******************************************************************************
 * void* printf_loop(void* ptr)
 *
 * Thread to print information for debugging.
 *******************************************************************************/
 void* printf_loop(void* ptr){
-	state_t last_state, new_state; // keep track of last state 
+	rc_state_t last_state, new_state; // keep track of last state 
 	while(rc_get_state()!=EXITING){
 		new_state = rc_get_state();
 		// check if this is the first time since being paused
 		if(new_state==RUNNING && last_state!=RUNNING){
 			printf("\nRUNNING\n");
 			printf("  Pitch  |");
-			printf("  Pitch Reference  |");
 			printf("  Roll  |");
-			printf("  Roll Reference  |");
+			printf("  WS Steps  |");
+			printf("  BL Duty L  |");
+			printf("  BL Duty R  |");
 			printf("  Battery Voltage  |");
 			printf("  Armstate  |");
 			printf("\n");
@@ -404,14 +541,12 @@ void* printf_loop(void* ptr){
 		if(new_state == RUNNING){	
 			printf("\r");
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
-			printf("%17.2f  |", reference_value.angle_about_x_axis_ref);
-
 			printf("%6.2f  |", sys_state.angle_about_y_axis);
-			printf("%16.2f  |", reference_value.angle_about_y_axis_ref);
-			
+			printf("%8.2f  |", sys_state.WS_duty_signal);
+			printf("%11.2f  |", sys_state.BL_duty_signal_left);
+			printf("%11.2f  |", sys_state.BL_duty_signal_right);
 			printf("%17.2f  |", sys_state.battery_voltage);
-			
-			printf("%10.2d  |", reference_value.armstate);
+			printf("%10.2d  |", controller_arming.armstate);
 			fflush(stdout);
 		}
 		rc_usleep(1000000 / PRINTF_HZ);
@@ -419,52 +554,47 @@ void* printf_loop(void* ptr){
 	return NULL;
 }
 
-void* read_input(void* ptr){
-	while(rc_get_state()!=EXITING){
-		sys_state.start_cond=1; //temporary until implement user input
+/*******************************************************************************
+* int print_usage()
+*
+* Prints default arguments to controller
+*******************************************************************************/
+int print_usage(){
 
-		rc_usleep(1000000 / GET_INPUT_HZ);
-	}
-	return NULL;
+	printf("display - Displays orientation data. 'display exit' stops display output.\n");
+	printf("drive ## - Sets desired angle of ## and sends to weight shift motor. \n");
+	printf("exit - Quit control software.\n");
+	printf("help - Displays list of commands.\n");
+	return 0;
 }
 
 /*******************************************************************************
-* int is_flying()
+* void on_pause_pressed()
 *
-* Checks if it should start controlling the motors
+* Quits if pause button is held. Mainly for debugging.
 *******************************************************************************/
-int is_flying(){
-	const int check_hz = 20;
-	int wait_us = 1000000/check_hz;
-	if(sys_state.start_cond == 1){
-		return 0;
-	}
-	else{
-		rc_usleep(wait_us);
-	}
-	return -1;
-}
-/*******************************************************************************
-* int on_pause_pressed()
-*
-* Quits if pause button is held.
-*******************************************************************************/
-int on_pause_pressed(){
+void on_pause_pressed(){
 	int i=0;
 	const int samples = 100;	// check for release 100 times in this period
 	const int us_wait = 1000000; // 1 second
 	// now keep checking to see if the button is still held down
 	for(i=0;i<samples;i++){
 		rc_usleep(us_wait/samples);
-		if(rc_get_pause_button() == RELEASED) return 0;
+		if(rc_get_pause_button() == RELEASED) return;
 	}
 	printf("Shutting down...\n");
 	rc_set_state(EXITING);
-	return 0;
+	return;
 }
-int on_pause_released(){
+
+/*******************************************************************************
+* void on_pause_released()
+*
+* Pauses if pause button is pressed. Mainly for debugging.
+*******************************************************************************/
+void on_pause_released(){
 	// toggle betewen paused and running modes
 	if(rc_get_state()==RUNNING)   		rc_set_state(PAUSED);
 	else if(rc_get_state()==PAUSED)	rc_set_state(RUNNING);
-	return 0;
+	return;
 }
