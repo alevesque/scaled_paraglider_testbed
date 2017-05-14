@@ -143,12 +143,7 @@ orientation_t orientation;
 controller_state_t controller_state;
 config_t cfg;
 cfg_settings_t cfg_setting;
-/*
-rc_filter_t lowpass_x_filt;
-rc_filter_t lowpass_y_filt;
-rc_filter_t highpass_x_filt;
-rc_filter_t highpass_y_filt;
-*/
+
 pthread_t battery_thread;
 pthread_t controller_arming_thread;
 pthread_t read_input_thread;
@@ -181,34 +176,6 @@ int main(){
 	//get configuration settings
 	get_config_settings();
 	/****************************************/
-
-
-
-	/******************************************
-	* Set up filters for data gathering.
-	******************************************/	
-	//create empty filters
-	/*
-	lowpass_x_filt  = rc_empty_filter();
-	highpass_x_filt  = rc_empty_filter();
-	lowpass_y_filt  = rc_empty_filter();
-	highpass_y_filt  = rc_empty_filter();
-	
-	//timestep, dt
-	double const dt = 1.0/(float)cfg_setting.SAMPLE_RATE_HZ;
-	//rise time, tr 
-	double const tr = 1;
-	//time constant from rise time
-	float const tau = tr/2.2;
-
-	//set up filters for finding theta from sensors
-	rc_first_order_lowpass(&lowpass_x_filt, dt, tau);
-	rc_first_order_highpass(&highpass_x_filt, dt, tau);
-	rc_first_order_lowpass(&lowpass_y_filt, dt, tau);
-	rc_first_order_highpass(&highpass_y_filt, dt, tau);
-	*/
-	/***********************/
-
 
 
 	// set up button handlers
@@ -427,18 +394,11 @@ int get_config_settings(){
 
 
 /*******************************************************************************
-* void* controller_arming_manager(void* ptr)
+* int cleanup_everything()
 *
-* Detects start conditions to control arming the controller.
+* Frees up memory and powers off imu to prepare for shutdown.
 *******************************************************************************/
 int cleanup_everything(){
-	//cleanup memory
-	/*
-	rc_free_filter(&lowpass_x_filt);
-	rc_free_filter(&highpass_x_filt);
-	rc_free_filter(&lowpass_y_filt);
-	rc_free_filter(&highpass_y_filt);
-	*/
 	rc_power_off_imu();
 	config_destroy(&cfg);
 	//rc_set_cpu_freq(FREQ_ONDEMAND);
@@ -500,14 +460,7 @@ void collect_data(){
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	orientation.x_gyro = sys_state.angle_about_x_axis + 0.01*data.gyro[0];
 	
-	/*
-	// filter angle data
-	double lp_filtered_output_x = rc_march_filter(&lowpass_x_filt, orientation.x_accel);
-	double hp_filtered_output_x = rc_march_filter(&highpass_x_filt, orientation.x_gyro);
-	
 	//complementary filter to get pitch angle
-	//sys_state.angle_about_x_axis = (lp_filtered_output_x+hp_filtered_output_x + cfg_setting.CAPE_MOUNT_ANGLE_X); 
-	*/
 	sys_state.angle_about_x_axis = (0.9*orientation.x_gyro+0.1*orientation.x_accel);
 	/*****************************************/
 	
@@ -522,18 +475,8 @@ void collect_data(){
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	orientation.y_gyro = sys_state.angle_about_y_axis + 0.01*data.gyro[1];
 	
-	/*
-	// filter angle data
-	double lp_filtered_output_y= rc_march_filter(&lowpass_y_filt, orientation.y_accel);
-	double hp_filtered_output_y = rc_march_filter(&highpass_y_filt, orientation.y_gyro);
 	
-	// get most recent filtered value
-	//double lp_filtered_output_y = rc_newest_filter_output(&lowpass_y_filt);
-	//double hp_filtered_output_y = rc_newest_filter_output(&highpass_y_filt);
-	
-	//complementary filter to get pitch angle
-	sys_state.angle_about_y_axis = (lp_filtered_output_y+hp_filtered_output_y + cfg_setting.CAPE_MOUNT_ANGLE_Y);
-	*/
+	//complementary filter to get roll angle
 	sys_state.angle_about_y_axis = (0.9*orientation.y_gyro+0.1*orientation.y_accel);
 	/****************************************/
 
