@@ -1,6 +1,5 @@
 #include <rc_usefulincludes.h>
 #include <roboticscape.h>
-<<<<<<< HEAD
 #include <libconfig.h>
 
 /*******************************************************************************
@@ -44,10 +43,6 @@ typedef struct cfg_settings_t{
 
 } cfg_settings_t;
 
-=======
-#include "config.h"
-#include "ale_helpful_fns.h"
->>>>>>> master
 /*******************************************************************************
 * armstate_t
 *
@@ -95,15 +90,9 @@ typedef struct core_state_t{
 	float angle_about_y_axis; 		// body angle radians
 	//float weightshift_dist;			//distance of weight from neutral position -- need to know how to read, wait on physical implementation
 	float battery_voltage; 		// battery voltage 
-<<<<<<< HEAD
 	float WS_angle_setpoint;			// output of controller to weight shift
 	//float BL_duty_signal_left;			// output of controller to pulley motors
 	//float BL_duty_signal_right;
-=======
-	float WS_duty_signal;			// output of controller to weight shift
-	float BL_duty_signal_left;			// output of controller to pulley motors
-	float BL_duty_signal_right;
->>>>>>> master
 } core_state_t;
 
 /*******************************************************************************
@@ -139,10 +128,7 @@ int zero_out_controller();
 int disarm_controller();
 int arm_controller();
 int cleanup_everything();
-<<<<<<< HEAD
 int get_config_settings();
-=======
->>>>>>> master
 void on_pause_pressed();
 void on_pause_released();
 
@@ -158,20 +144,10 @@ controller_state_t controller_state;
 config_t cfg;
 cfg_settings_t cfg_setting;
 
-<<<<<<< HEAD
 pthread_t battery_thread;
 pthread_t controller_arming_thread;
 pthread_t read_input_thread;
 pthread_t  printf_thread;
-=======
-rc_filter_t lowpass_x_filt;
-rc_filter_t lowpass_y_filt;
-rc_filter_t highpass_x_filt;
-rc_filter_t highpass_y_filt;
-
-
-
->>>>>>> master
 
 /*******************************************************************************
 * main()
@@ -196,36 +172,6 @@ int main(){
 	// make sure controller_arming starts at normal values
 	controller_arming.armstate = DISARMED;
 
-<<<<<<< HEAD
-=======
-	/****************************************/
-
-
-
-	/******************************************
-	* Set up filters for data gathering.
-	******************************************/	
-	//create empty filters
-	lowpass_x_filt  = rc_empty_filter();
-	highpass_x_filt  = rc_empty_filter();
-	lowpass_y_filt  = rc_empty_filter();
-	highpass_y_filt  = rc_empty_filter();
-	
-	//timestep, dt
-	double const dt = 1.0/(float)SAMPLE_RATE_HZ;
-	//rise time, tr 
-	double const tr = 1;
-	//time constant from rise time
-	float const tau = tr/2.2;
-
-	//set up filters for finding theta from sensors
-	rc_first_order_lowpass(&lowpass_x_filt,dt, tau);
-	rc_first_order_highpass(&highpass_x_filt,dt, tau);
-	rc_first_order_lowpass(&lowpass_y_filt,dt, tau);
-	rc_first_order_highpass(&highpass_y_filt,dt, tau);
-	
-	/***********************/
->>>>>>> master
 
 	//get configuration settings
 	get_config_settings();
@@ -252,11 +198,7 @@ int main(){
 	
 	
 	// set up IMU configuration
-<<<<<<< HEAD
 	conf.dmp_sample_rate = cfg_setting.SAMPLE_RATE_HZ;
-=======
-	conf.dmp_sample_rate = SAMPLE_RATE_HZ;
->>>>>>> master
 	
 	//set orientation of beaglebone
 	conf.orientation = ORIENTATION_Z_UP;
@@ -294,16 +236,11 @@ int main(){
 
 	//now exiting
 	cleanup_everything();
-<<<<<<< HEAD
 	pthread_cancel(read_input_thread);
-=======
-	
->>>>>>> master
 	return 0;
 }
 
 
-<<<<<<< HEAD
 /*******************************************************************************
 * int get_settings()
 *
@@ -469,22 +406,6 @@ int cleanup_everything(){
 	pthread_cancel(battery_thread);
 	pthread_cancel(printf_thread);
 
-=======
-
-/*******************************************************************************
-* void* controller_arming_manager(void* ptr)
-*
-* Detects start conditions to control arming the controller.
-*******************************************************************************/
-int cleanup_everything(){
-	//cleanup memory
-	rc_free_filter(&lowpass_x_filt);
-	rc_free_filter(&highpass_x_filt);
-	rc_free_filter(&lowpass_y_filt);
-	rc_free_filter(&highpass_y_filt);
-	rc_power_off_imu();
-	//rc_set_cpu_freq(FREQ_ONDEMAND);
->>>>>>> master
 	rc_cleanup();
 	return 0;
 }
@@ -527,15 +448,9 @@ void* controller_arming_manager(void* ptr){
 * Finds orientation from sensors.
 *******************************************************************************/
 void collect_data(){
-<<<<<<< HEAD
 
 
 
-=======
-
-
-
->>>>>>> master
 	/*****************************************
 	* Find Pitch Data
 	*****************************************/
@@ -545,29 +460,12 @@ void collect_data(){
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	orientation.x_gyro = sys_state.angle_about_x_axis + 0.01*data.gyro[0];
 	
-<<<<<<< HEAD
 	//complementary filter to get pitch angle
 	sys_state.angle_about_x_axis = (0.9*orientation.x_gyro+0.1*orientation.x_accel);
 	/*****************************************/
 	
 
 
-=======
-	// filter angle data
-	double lp_filtered_output_x = rc_march_filter(&lowpass_x_filt, orientation.x_accel);
-	double hp_filtered_output_x = rc_march_filter(&highpass_x_filt, orientation.x_gyro);
-	
-	// get most recent filtered value
-	//double lp_filtered_output_ x= rc_newest_filter_output(&lowpass_x_filt);
-	//double hp_filtered_output_x = rc_newest_filter_output(&highpass_x_filt);
-	
-	//complementary filter to get pitch angle
-	sys_state.angle_about_x_axis = (lp_filtered_output_x+hp_filtered_output_x + CAPE_MOUNT_ANGLE_X); //(0.98*orientation.x_gyro+0.02*orientation.x_accel);
-	
-	/*****************************************/
-	
-
->>>>>>> master
 	/*****************************************
 	* Find Roll Data
 	*****************************************/
@@ -577,27 +475,12 @@ void collect_data(){
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	orientation.y_gyro = sys_state.angle_about_y_axis + 0.01*data.gyro[1];
 	
-<<<<<<< HEAD
 	
 	//complementary filter to get roll angle
 	sys_state.angle_about_y_axis = (0.9*orientation.y_gyro+0.1*orientation.y_accel);
 	/****************************************/
 
 
-=======
-	// filter angle data
-	double lp_filtered_output_y= rc_march_filter(&lowpass_y_filt, orientation.y_accel);
-	double hp_filtered_output_y = rc_march_filter(&highpass_y_filt, orientation.y_gyro);
-	
-	// get most recent filtered value
-	//double lp_filtered_output_y = rc_newest_filter_output(&lowpass_y_filt);
-	//double hp_filtered_output_y = rc_newest_filter_output(&highpass_y_filt);
-	
-	//complementary filter to get pitch angle
-	sys_state.angle_about_y_axis = (lp_filtered_output_y+hp_filtered_output_y + CAPE_MOUNT_ANGLE_Y);
-	
-	/****************************************/
->>>>>>> master
 
 	//check for various exit conditions AFTER state estimate
 	
@@ -675,16 +558,11 @@ void* battery_checker(void* ptr){
 /*******************************************************************************
 * int motor_output()
 *
-<<<<<<< HEAD
 * Outputs duty cycle to motors based on number of PID control of # of steps.
-=======
-* Outputs duty cycle to motors based on number of steps.
->>>>>>> master
 *******************************************************************************/
 int motor_output(){
 	if (controller_arming.motor_on == 1){
 	
-<<<<<<< HEAD
 		int i;
 		//find error between current orientation and setpoint
 		controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
@@ -714,21 +592,6 @@ int motor_output(){
 			controller_state.steps = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_I*controller_state.integral) + (cfg_setting.K_D*controller_state.derivative);
 		}
 		
-=======
-		if(sys_state.WS_duty_signal<0){
-			rc_gpio_set_value_mmap(WS_MOTOR_DIR_PIN,LOW);
-		}
-		else{
-			rc_gpio_set_value_mmap(WS_MOTOR_DIR_PIN,HIGH);
-		}
-		int steps;
-		for(steps=0;steps<sys_state.WS_duty_signal;steps++){ //maybe need <=
-		rc_gpio_set_value_mmap(WS_MOTOR_CHANNEL,HIGH);
-		rc_usleep(150);
-		rc_gpio_set_value_mmap(WS_MOTOR_CHANNEL,LOW);
-		rc_usleep(400);
-		}
->>>>>>> master
 	}
 	else{
 		return -1;
@@ -744,12 +607,7 @@ int motor_output(){
 *******************************************************************************/
 void* read_input(void* ptr){
 
-<<<<<<< HEAD
 	
-=======
-	//thread for printing data to screen
-	pthread_t  printf_thread;
->>>>>>> master
 	printf("Enter command ('help' for command list): \n");
 
 	while(rc_get_state()!=EXITING){		
@@ -784,13 +642,8 @@ void* read_input(void* ptr){
 					//if there isn't OPTION specified:
 					//start printf_thread if running from a terminal
 					//if it was started as a background process then don't bother
-<<<<<<< HEAD
 					else if(isatty(fileno(stdout))){  
 						pthread_create(&printf_thread, NULL, printf_loop, (void*) NULL); //thread for printing data to screen
-=======
-					else if(isatty(fileno(stdout))){ 
-						pthread_create(&printf_thread, NULL, printf_loop, (void*) NULL);
->>>>>>> master
 						pthread_detach(printf_thread);  //detach thread so it can be closed easier. 
 														//fine to do since it doesn't need to do anything except display stuff on screen
 					}
@@ -799,11 +652,7 @@ void* read_input(void* ptr){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
 						controller_arming.motor_on = 1; //arm motors
-<<<<<<< HEAD
 						sys_state.WS_angle_setpoint = cfg_setting.STEPS_PER_WS_ANGLE_DEGREE*atoi(command_opt); //send # of steps to motor_output()
-=======
-						sys_state.WS_duty_signal = STEPS_PER_WS_ANGLE_DEGREE*atoi(command_opt); //send # of steps to motor_output()
->>>>>>> master
 						motor_output(); //drive motors
 					}
 					else{
@@ -813,11 +662,8 @@ void* read_input(void* ptr){
 				}
 				else if (!strcmp(command,"exit")){
 					cleanup_everything();
-<<<<<<< HEAD
 					rc_set_state(EXITING);
 					return NULL;
-=======
->>>>>>> master
 				}
 				else if (!strcmp(command,"help")){
 					print_usage();
@@ -831,11 +677,7 @@ void* read_input(void* ptr){
 		}
 
 		//signal PWM duty to motor driver
-<<<<<<< HEAD
 		//rc_set_motor(WS_MOTOR_CHANNEL, sys_state.WS_angle_setpoint); 
-=======
-		//rc_set_motor(WS_MOTOR_CHANNEL, sys_state.WS_duty_signal); 
->>>>>>> master
 		//rc_set_motor(BL_MOTOR_CHANNEL_L, BL_MOTOR_POLARITY_L * sys_state.BL_duty_signal_left); 
 		//rc_set_motor(BL_MOTOR_CHANNEL_R, BL_MOTOR_POLARITY_R * sys_state.BL_duty_signal_right); 
 
@@ -847,11 +689,7 @@ void* read_input(void* ptr){
 		//create thread with freq of pwm? where toggles high/low
 		//rc_gpio_set_value(WS_MOTOR_CHANNEL, HIGH);
 
-<<<<<<< HEAD
 		rc_usleep(1000000 / cfg_setting.READ_INPUT_HZ);
-=======
-		rc_usleep(1000000 / READ_INPUT_HZ);
->>>>>>> master
 	}
 	return NULL;
 }
@@ -872,14 +710,9 @@ void* printf_loop(void* ptr){
 			printf("  Pitch  |");
 			printf("  Roll  |");
 			printf("  WS Steps  |");
-<<<<<<< HEAD
 			printf("  Error  |");
 			//printf("  BL Duty L  |");
 			//printf("  BL Duty R  |");
-=======
-			printf("  BL Duty L  |");
-			printf("  BL Duty R  |");
->>>>>>> master
 			printf("  Battery Voltage  |");
 			printf("  Armstate  |");
 			printf("\n");
@@ -913,19 +746,11 @@ void* printf_loop(void* ptr){
 * Prints default arguments to controller
 *******************************************************************************/
 int print_usage(){
-<<<<<<< HEAD
 	printf("\nCommand List: \n");
 	printf("1) display - Displays orientation data. 'display exit' stops display output.\n");
 	printf("2) drive ## - Sets desired angle of ## and sends to weight shift motor. \n");
 	printf("3) exit - Quit control software.\n");
 	printf("4) help - Displays list of commands.\n");
-=======
-
-	printf("display - Displays orientation data. 'display exit' stops display output.\n");
-	printf("drive ## - Sets desired angle of ## and sends to weight shift motor. \n");
-	printf("exit - Quit control software.\n");
-	printf("help - Displays list of commands.\n");
->>>>>>> master
 	return 0;
 }
 
@@ -958,7 +783,6 @@ void on_pause_released(){
 	if(rc_get_state()==RUNNING)   		rc_set_state(PAUSED);
 	else if(rc_get_state()==PAUSED)	rc_set_state(RUNNING);
 	return;
-<<<<<<< HEAD
 }
 
 char *trimwhitespace(char *str)
@@ -979,6 +803,4 @@ char *trimwhitespace(char *str)
   *(end+1) = 0;
 
   return str;
-=======
->>>>>>> master
 }
