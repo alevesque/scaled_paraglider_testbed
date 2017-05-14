@@ -8,7 +8,7 @@
 * Holds values of settings read from cfg file.
 *******************************************************************************/
 typedef struct cfg_settings_t{
-	
+
 	int SAMPLE_RATE_HZ;
 
 	// Structural properties of BBB
@@ -55,7 +55,7 @@ typedef enum armstate_t{
 
 /*******************************************************************************
 * controller_arming_t
-*	
+*
 * Controller arming state written to by controller_arming_manager and read by the controller.
 *******************************************************************************/
 typedef struct controller_arming_t{ //setpoints
@@ -67,7 +67,7 @@ typedef struct controller_arming_t{ //setpoints
 /*******************************************************************************
 * controller_state_t
 *
-* This is the system state written to by the controller.	
+* This is the system state written to by the controller.
 *******************************************************************************/
 typedef struct controller_state_t{
 		//setup controller values
@@ -89,7 +89,7 @@ typedef struct core_state_t{
 	float angle_about_x_axis; 		// body angle radians
 	float angle_about_y_axis; 		// body angle radians
 	//float weightshift_dist;			//distance of weight from neutral position -- need to know how to read, wait on physical implementation
-	float battery_voltage; 		// battery voltage 
+	float battery_voltage; 		// battery voltage
 	float WS_angle_setpoint;			// output of controller to weight shift
 	//float BL_duty_signal_left;			// output of controller to pulley motors
 	//float BL_duty_signal_right;
@@ -109,7 +109,7 @@ typedef struct orientation_t{
 
 
 /*******************************************************************************
-* Local Function declarations	
+* Local Function declarations
 *******************************************************************************/
 // IMU interrupt routine
 void collect_data();
@@ -134,7 +134,7 @@ void on_pause_released();
 
 
 /*******************************************************************************
-* Global Variables				
+* Global Variables
 *******************************************************************************/
 core_state_t sys_state;
 controller_arming_t controller_arming;
@@ -181,28 +181,28 @@ int main(){
 	// set up button handlers
 	rc_set_pause_pressed_func(&on_pause_pressed);
 	rc_set_mode_released_func(&on_pause_released);
-	
-	
+
+
 	//can use gps header for gpio if needed, where WS_MOTOR_CHANNEL is the gpio pin #
 	//rc_gpio_set_dir(WS_MOTOR_CHANNEL, OUTPUT_PIN);
 	//rc_set_pinmux_mode(WS_MOTOR_CHANNEL, PINMUX_PWM);
 
-	
 
 
-	// start a thread to slowly sample battery 
+
+	// start a thread to slowly sample battery
 	pthread_create(&battery_thread, NULL, battery_checker, (void*) NULL);
 	// wait for the battery thread to make the first read
 	while(sys_state.battery_voltage==0 && rc_get_state()!=EXITING) usleep(1000);
-	
-	
-	
+
+
+
 	// set up IMU configuration
 	conf.dmp_sample_rate = cfg_setting.SAMPLE_RATE_HZ;
-	
+
 	//set orientation of beaglebone
 	conf.orientation = ORIENTATION_Z_UP;
-	
+
 	// start imu
 	if(rc_initialize_imu_dmp(&data, conf)){
 		printf("ERROR: IMU initialization failed!\n");
@@ -216,14 +216,14 @@ int main(){
 
 	//start thread for reading user input
 	pthread_create(&read_input_thread, NULL, read_input, (void*) NULL);
-	
+
 	//set imu interrupt function
 	rc_set_imu_interrupt_func(&collect_data);
-		
+
 	rc_set_state(RUNNING);
 	rc_set_led(RED,0);
 	rc_set_led(GREEN,1);
-	
+
 	printf("@-----------------------------@\n");
 	printf("| Paraglider Control Software |\n");
 	printf("@-----------------------------@\n\n");
@@ -231,7 +231,7 @@ int main(){
 	while(rc_get_state()!=EXITING){
 		rc_usleep(10000);
 	}
-	
+
 
 
 	//now exiting
@@ -388,7 +388,7 @@ int get_config_settings(){
 		fprintf(stderr, "No 'K_D' setting in configuration file.\n");
   	}
 
-  	
+
 	return 0;
 }
 
@@ -416,14 +416,14 @@ int cleanup_everything(){
 * Detects start conditions to control arming the controller.
 *******************************************************************************/
 void* controller_arming_manager(void* ptr){
-	
+
 	disarm_controller();
 	rc_usleep(2500000);
-		
+
 	while(rc_get_state()!=EXITING){
 		// sleep at beginning of loop so we can use the 'continue' statement
-		rc_usleep(1000000/cfg_setting.CONTROLLER_ARMING_MANAGER_HZ); 
-		
+		rc_usleep(1000000/cfg_setting.CONTROLLER_ARMING_MANAGER_HZ);
+
 		// nothing to do if paused, go back to beginning of loop
 		if(rc_get_state() != RUNNING) continue;
 
@@ -432,9 +432,9 @@ void* controller_arming_manager(void* ptr){
 		// which will we detected by is_flying()
 		if(controller_arming.armstate == DISARMED){
 				zero_out_controller();
-				arm_controller(); 
+				arm_controller();
 			}
-			else continue;		
+			else continue;
 	}
 
 	// if state becomes EXITING the above loop exists and we disarm here
@@ -459,11 +459,11 @@ void collect_data(){
 
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	orientation.x_gyro = sys_state.angle_about_x_axis + 0.01*data.gyro[0];
-	
+
 	//complementary filter to get pitch angle
 	sys_state.angle_about_x_axis = (0.9*orientation.x_gyro+0.1*orientation.x_accel);
 	/*****************************************/
-	
+
 
 
 	/*****************************************
@@ -474,8 +474,8 @@ void collect_data(){
 
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	orientation.y_gyro = sys_state.angle_about_y_axis + 0.01*data.gyro[1];
-	
-	
+
+
 	//complementary filter to get roll angle
 	sys_state.angle_about_y_axis = (0.9*orientation.y_gyro+0.1*orientation.y_accel);
 	/****************************************/
@@ -483,7 +483,7 @@ void collect_data(){
 
 
 	//check for various exit conditions AFTER state estimate
-	
+
 	if(rc_get_state() == EXITING){
 		//rc_disable_servo_power_rail()
 		rc_disable_motors();
@@ -498,7 +498,7 @@ void collect_data(){
 	if(controller_arming.armstate==DISARMED){
 		return;
 	}
-	
+
 	return;
 }
 
@@ -562,13 +562,13 @@ void* battery_checker(void* ptr){
 *******************************************************************************/
 int motor_output(){
 	if (controller_arming.motor_on == 1){
-	
+
 		int i;
 		//find error between current orientation and setpoint
 		controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
-		
+
 		//PID control while error too big
-		while(abs(controller_state.error) > 0.1){
+		while(abs(controller_state.error) > 1.0){
 			//set motor direction based on sign of error signal
 			if(controller_state.error<0){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
@@ -591,7 +591,7 @@ int motor_output(){
 			controller_state.integral = controller_state.integral + controller_state.error;
 			controller_state.steps = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_I*controller_state.integral) + (cfg_setting.K_D*controller_state.derivative);
 		}
-		
+
 	}
 	else{
 		return -1;
@@ -607,10 +607,10 @@ int motor_output(){
 *******************************************************************************/
 void* read_input(void* ptr){
 
-	
+
 	printf("Enter command ('help' for command list): \n");
 
-	while(rc_get_state()!=EXITING){		
+	while(rc_get_state()!=EXITING){
 
 		char c[21]; //user input array
 		char c_trimmed[21]; //cleaned up user input array
@@ -619,32 +619,32 @@ void* read_input(void* ptr){
 		if (fgets(c,20,stdin) != NULL){ //if there is input:
 			strcpy(c_trimmed,trimwhitespace(c)); //delete trailing and leading whitespace
 			if (c_trimmed[0] != '\n' && c_trimmed[0] != '\0'){ //if what is left is not a newline or NULL
-				
+
 				char *command,*command_opt;
-								
+
 				command = strtok(c_trimmed," "); //break input into format 'COMMMAND OPTION'
 				command_opt = strtok(NULL," ");
 
-				
-				
+
+
 
 				if(!strcmp(command,"display")){ //if COMMAND is 'display':
 					if(command_opt != NULL){ //and if there is an OPTION specified
 						if(!strcmp(command_opt,"exit")){ //and that option is to exit
-							
+
 							pthread_cancel(printf_thread); //exit display thread
 						}
 						else{
 							print_usage(); //otherwise show correct command syntax
 						}
 					}
-					
+
 					//if there isn't OPTION specified:
 					//start printf_thread if running from a terminal
 					//if it was started as a background process then don't bother
-					else if(isatty(fileno(stdout))){  
+					else if(isatty(fileno(stdout))){
 						pthread_create(&printf_thread, NULL, printf_loop, (void*) NULL); //thread for printing data to screen
-						pthread_detach(printf_thread);  //detach thread so it can be closed easier. 
+						pthread_detach(printf_thread);  //detach thread so it can be closed easier.
 														//fine to do since it doesn't need to do anything except display stuff on screen
 					}
 				}
@@ -672,14 +672,14 @@ void* read_input(void* ptr){
 					printf("Invalid command.\n");
 					print_usage();
 				}
-		
+
 			}
 		}
 
 		//signal PWM duty to motor driver
-		//rc_set_motor(WS_MOTOR_CHANNEL, sys_state.WS_angle_setpoint); 
-		//rc_set_motor(BL_MOTOR_CHANNEL_L, BL_MOTOR_POLARITY_L * sys_state.BL_duty_signal_left); 
-		//rc_set_motor(BL_MOTOR_CHANNEL_R, BL_MOTOR_POLARITY_R * sys_state.BL_duty_signal_right); 
+		//rc_set_motor(WS_MOTOR_CHANNEL, sys_state.WS_angle_setpoint);
+		//rc_set_motor(BL_MOTOR_CHANNEL_L, BL_MOTOR_POLARITY_L * sys_state.BL_duty_signal_left);
+		//rc_set_motor(BL_MOTOR_CHANNEL_R, BL_MOTOR_POLARITY_R * sys_state.BL_duty_signal_right);
 
 		//can use servo rails maybe
 		//need to map duty cycle to us pulse width (NOT MODULATED BY FREQ, different from PWM)
@@ -701,7 +701,7 @@ void* read_input(void* ptr){
 * Thread to print information for debugging.
 *******************************************************************************/
 void* printf_loop(void* ptr){
-	rc_state_t last_state, new_state; // keep track of last state 
+	rc_state_t last_state, new_state; // keep track of last state
 	while(rc_get_state()!=EXITING){
 		new_state = rc_get_state();
 		// check if this is the first time since being paused
@@ -721,9 +721,9 @@ void* printf_loop(void* ptr){
 			printf("\nPAUSED: press pause again to start.\n");
 		}
 		last_state = new_state;
-		
+
 		// decide what to print or exit
-		if(new_state == RUNNING){	
+		if(new_state == RUNNING){
 			printf("\r");
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%6.2f  |", sys_state.angle_about_y_axis);
