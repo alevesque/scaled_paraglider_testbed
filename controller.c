@@ -1,7 +1,53 @@
 #include <rc_usefulincludes.h>
 #include <roboticscape.h>
+<<<<<<< HEAD
+#include <libconfig.h>
+
+/*******************************************************************************
+* cfg_settings_t
+*
+* Holds values of settings read from cfg file.
+*******************************************************************************/
+typedef struct cfg_settings_t{
+	
+	int SAMPLE_RATE_HZ;
+
+	// Structural properties of BBB
+	int STEPS_PER_WS_ANGLE_DEGREE;
+	float CAPE_MOUNT_ANGLE_X;
+	float CAPE_MOUNT_ANGLE_Y;
+	float CAPE_MOUNT_ANGLE_Z;
+	int V_NOMINAL;
+
+	// electrical hookups
+	int WS_MOTOR_CHANNEL;
+	int WS_MOTOR_DIR_PIN;
+	/*
+	int BL_MOTOR_CHANNEL_L;
+	int BL_MOTOR_DIR_PIN_L;
+	int BL_MOTOR_CHANNEL_R;
+	int BL_MOTOR_DIR_PIN_R;
+	int BL_MOTOR_POLARITY_L;
+	int BL_MOTOR_POLARITY_R;
+	*/
+
+	// Thread Loop Rates
+	int	BATTERY_CHECK_HZ;
+	int CONTROLLER_ARMING_MANAGER_HZ;
+	int	PRINTF_HZ;
+	int	READ_INPUT_HZ;
+
+	// PID Parameters
+	float K_P;
+	float K_I;
+	float K_D;
+
+} cfg_settings_t;
+
+=======
 #include "config.h"
 #include "ale_helpful_fns.h"
+>>>>>>> master
 /*******************************************************************************
 * armstate_t
 *
@@ -22,21 +68,42 @@ typedef struct controller_arming_t{ //setpoints
 	int motor_on;
 } controller_arming_t;
 
+
 /*******************************************************************************
-* core_state_t
+* controller_state_t
 *
 * This is the system state written to by the controller.	
 *******************************************************************************/
+typedef struct controller_state_t{
+		//setup controller values
+		int steps;
+		int error;
+		int last_error;
+		int derivative;
+		int integral;
+} controller_state_t;
+
+/*******************************************************************************
+* core_state_t
+*
+* This is the physical system state.
+*******************************************************************************/
 typedef struct core_state_t{
-	float right_pulley_angle;	// pulley rotation
-	float left_pulley_angle;
+	//float right_pulley_angle;	// pulley rotation
+	//float left_pulley_angle;
 	float angle_about_x_axis; 		// body angle radians
 	float angle_about_y_axis; 		// body angle radians
-	float weightshift_dist;			//distance of weight from neutral position -- need to know how to read, wait on physical implementation
+	//float weightshift_dist;			//distance of weight from neutral position -- need to know how to read, wait on physical implementation
 	float battery_voltage; 		// battery voltage 
+<<<<<<< HEAD
+	float WS_angle_setpoint;			// output of controller to weight shift
+	//float BL_duty_signal_left;			// output of controller to pulley motors
+	//float BL_duty_signal_right;
+=======
 	float WS_duty_signal;			// output of controller to weight shift
 	float BL_duty_signal_left;			// output of controller to pulley motors
 	float BL_duty_signal_right;
+>>>>>>> master
 } core_state_t;
 
 /*******************************************************************************
@@ -72,6 +139,10 @@ int zero_out_controller();
 int disarm_controller();
 int arm_controller();
 int cleanup_everything();
+<<<<<<< HEAD
+int get_config_settings();
+=======
+>>>>>>> master
 void on_pause_pressed();
 void on_pause_released();
 
@@ -83,7 +154,16 @@ core_state_t sys_state;
 controller_arming_t controller_arming;
 rc_imu_data_t data;
 orientation_t orientation;
+controller_state_t controller_state;
+config_t cfg;
+cfg_settings_t cfg_setting;
 
+<<<<<<< HEAD
+pthread_t battery_thread;
+pthread_t controller_arming_thread;
+pthread_t read_input_thread;
+pthread_t  printf_thread;
+=======
 rc_filter_t lowpass_x_filt;
 rc_filter_t lowpass_y_filt;
 rc_filter_t highpass_x_filt;
@@ -91,6 +171,7 @@ rc_filter_t highpass_y_filt;
 
 
 
+>>>>>>> master
 
 /*******************************************************************************
 * main()
@@ -115,6 +196,8 @@ int main(){
 	// make sure controller_arming starts at normal values
 	controller_arming.armstate = DISARMED;
 
+<<<<<<< HEAD
+=======
 	/****************************************/
 
 
@@ -142,7 +225,11 @@ int main(){
 	rc_first_order_highpass(&highpass_y_filt,dt, tau);
 	
 	/***********************/
+>>>>>>> master
 
+	//get configuration settings
+	get_config_settings();
+	/****************************************/
 
 
 	// set up button handlers
@@ -158,7 +245,6 @@ int main(){
 
 
 	// start a thread to slowly sample battery 
-	pthread_t battery_thread;
 	pthread_create(&battery_thread, NULL, battery_checker, (void*) NULL);
 	// wait for the battery thread to make the first read
 	while(sys_state.battery_voltage==0 && rc_get_state()!=EXITING) usleep(1000);
@@ -166,7 +252,11 @@ int main(){
 	
 	
 	// set up IMU configuration
+<<<<<<< HEAD
+	conf.dmp_sample_rate = cfg_setting.SAMPLE_RATE_HZ;
+=======
 	conf.dmp_sample_rate = SAMPLE_RATE_HZ;
+>>>>>>> master
 	
 	//set orientation of beaglebone
 	conf.orientation = ORIENTATION_Z_UP;
@@ -179,12 +269,10 @@ int main(){
 
 
 	// start thread to control arming/disarming controller.
-	pthread_t controller_arming_thread;
 	pthread_create(&controller_arming_thread, NULL, controller_arming_manager, (void*) NULL);
 
 
 	//start thread for reading user input
-	pthread_t read_input_thread;
 	pthread_create(&read_input_thread, NULL, read_input, (void*) NULL);
 	
 	//set imu interrupt function
@@ -206,11 +294,182 @@ int main(){
 
 	//now exiting
 	cleanup_everything();
+<<<<<<< HEAD
+	pthread_cancel(read_input_thread);
+=======
 	
+>>>>>>> master
 	return 0;
 }
 
 
+<<<<<<< HEAD
+/*******************************************************************************
+* int get_settings()
+*
+* Inputs config settings from config text file.
+*******************************************************************************/
+int get_config_settings(){
+	int cfg_value_int;
+	double cfg_value_float;
+	config_init(&cfg);
+	/* Read the file. If there is an error, report it and exit. */
+ 	if(!config_read_file(&cfg, "paraglider_config.cfg"))
+  	{
+	    fprintf(stderr, "%s:%d - %s\n", config_error_file(&cfg),
+	    config_error_line(&cfg), config_error_text(&cfg));
+	    config_destroy(&cfg);
+	    return(EXIT_FAILURE);
+	}
+
+	if(config_lookup_int(&cfg, "SAMPLE_RATE_HZ", &cfg_value_int)){
+    	cfg_setting.SAMPLE_RATE_HZ = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'SAMPLE_RATE_HZ' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "STEPS_PER_WS_ANGLE_DEGREE", &cfg_value_int)){
+    	cfg_setting.STEPS_PER_WS_ANGLE_DEGREE = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'STEPS_PER_WS_ANGLE_DEGREE' setting in configuration file.\n");
+  	}
+  	if(config_lookup_float(&cfg, "CAPE_MOUNT_ANGLE_X", &cfg_value_float)){
+    	cfg_setting.CAPE_MOUNT_ANGLE_X = cfg_value_float;
+	}
+  	else{
+		fprintf(stderr, "No 'CAPE_MOUNT_ANGLE_X' setting in configuration file.\n");
+  	}
+  	if(config_lookup_float(&cfg, "CAPE_MOUNT_ANGLE_Y", &cfg_value_float)){
+    	cfg_setting.CAPE_MOUNT_ANGLE_Y = cfg_value_float;
+	}
+  	else{
+		fprintf(stderr, "No 'CAPE_MOUNT_ANGLE_Y' setting in configuration file.\n");
+  	}
+  	if(config_lookup_float(&cfg, "CAPE_MOUNT_ANGLE_Z", &cfg_value_float)){
+    	cfg_setting.CAPE_MOUNT_ANGLE_Z = cfg_value_float;
+	}
+  	else{
+		fprintf(stderr, "No 'CAPE_MOUNT_ANGLE_Z' setting in configuration file.\n");
+  	}
+  	if(config_lookup_float(&cfg, "V_NOMINAL", &cfg_value_float)){
+    	cfg_setting.V_NOMINAL = cfg_value_float;
+	}
+  	else{
+		fprintf(stderr, "No 'V_NOMINAL' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "WS_MOTOR_CHANNEL", &cfg_value_int)){
+    	cfg_setting.WS_MOTOR_CHANNEL = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'WS_MOTOR_CHANNEL' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "WS_MOTOR_DIR_PIN", &cfg_value_int)){
+    	cfg_setting.WS_MOTOR_DIR_PIN = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'WS_MOTOR_DIR_PIN' setting in configuration file.\n");
+  	}
+  	/*
+  	if(config_lookup_int(&cfg, "BL_MOTOR_CHANNEL_L", &cfg_value_int)){
+    	cfg_setting.BL_MOTOR_CHANNEL_L = cfg_value_int;
+	}
+	else{
+		fprintf(stderr, "No 'BL_MOTOR_CHANNEL_L' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "BL_MOTOR_DIR_PIN_L", &cfg_value_int)){
+    	cfg_setting.BL_MOTOR_DIR_PIN_L = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'BL_MOTOR_DIR_PIN_L' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "BL_MOTOR_CHANNEL_R", &cfg_value_int)){
+    	cfg_setting.BL_MOTOR_CHANNEL_R = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'BL_MOTOR_CHANNEL_R' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "BL_MOTOR_DIR_PIN_R", &cfg_value_int)){
+    	cfg_setting.BL_MOTOR_DIR_PIN_R = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'BL_MOTOR_DIR_PIN_R' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "BL_MOTOR_POLARITY_L", &cfg_value_int)){
+    	cfg_setting.BL_MOTOR_POLARITY_L = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'BL_MOTOR_POLARITY_L' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "BL_MOTOR_POLARITY_R", &cfg_value_int)){
+    	cfg_setting.BL_MOTOR_POLARITY_R = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'BL_MOTOR_POLARITY_R' setting in configuration file.\n");
+  	}
+  	*/
+  	if(config_lookup_int(&cfg, "BATTERY_CHECK_HZ", &cfg_value_int)){
+    	cfg_setting.BATTERY_CHECK_HZ = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'BATTERY_CHECK_HZ' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "CONTROLLER_ARMING_MANAGER_HZ", &cfg_value_int)){
+    	cfg_setting.CONTROLLER_ARMING_MANAGER_HZ = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'CONTROLLER_ARMING_MANAGER_HZ' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "PRINTF_HZ", &cfg_value_int)){
+    	cfg_setting.PRINTF_HZ = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'PRINTF_HZ' setting in configuration file.\n");
+  	}
+  	if(config_lookup_int(&cfg, "READ_INPUT_HZ", &cfg_value_int)){
+    	cfg_setting.READ_INPUT_HZ = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'READ_INPUT_HZ' setting in configuration file.\n");
+  	}
+  	if(config_lookup_float(&cfg, "K_P", &cfg_value_float)){
+    	cfg_setting.K_P = cfg_value_float;
+	}
+  	else{
+		fprintf(stderr, "No 'K_P' setting in configuration file.\n");
+  	}
+  	if(config_lookup_float(&cfg, "K_I", &cfg_value_float)){
+    	cfg_setting.K_I = cfg_value_float;
+	}
+  	else{
+		fprintf(stderr, "No 'K_I' setting in configuration file.\n");
+  	}
+  	if(config_lookup_float(&cfg, "K_D", &cfg_value_float)){
+    	cfg_setting.K_D = cfg_value_float;
+	}
+  	else{
+		fprintf(stderr, "No 'K_D' setting in configuration file.\n");
+  	}
+
+  	
+	return 0;
+}
+
+
+/*******************************************************************************
+* int cleanup_everything()
+*
+* Frees up memory and powers off imu to prepare for shutdown.
+*******************************************************************************/
+int cleanup_everything(){
+	rc_power_off_imu();
+	config_destroy(&cfg);
+	//rc_set_cpu_freq(FREQ_ONDEMAND);
+	pthread_cancel(controller_arming_thread);
+	pthread_cancel(battery_thread);
+	pthread_cancel(printf_thread);
+
+=======
 
 /*******************************************************************************
 * void* controller_arming_manager(void* ptr)
@@ -225,6 +484,7 @@ int cleanup_everything(){
 	rc_free_filter(&highpass_y_filt);
 	rc_power_off_imu();
 	//rc_set_cpu_freq(FREQ_ONDEMAND);
+>>>>>>> master
 	rc_cleanup();
 	return 0;
 }
@@ -241,7 +501,7 @@ void* controller_arming_manager(void* ptr){
 		
 	while(rc_get_state()!=EXITING){
 		// sleep at beginning of loop so we can use the 'continue' statement
-		rc_usleep(1000000/CONTROLLER_ARMING_MANAGER_HZ); 
+		rc_usleep(1000000/cfg_setting.CONTROLLER_ARMING_MANAGER_HZ); 
 		
 		// nothing to do if paused, go back to beginning of loop
 		if(rc_get_state() != RUNNING) continue;
@@ -267,9 +527,15 @@ void* controller_arming_manager(void* ptr){
 * Finds orientation from sensors.
 *******************************************************************************/
 void collect_data(){
+<<<<<<< HEAD
 
 
 
+=======
+
+
+
+>>>>>>> master
 	/*****************************************
 	* Find Pitch Data
 	*****************************************/
@@ -279,6 +545,14 @@ void collect_data(){
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	orientation.x_gyro = sys_state.angle_about_x_axis + 0.01*data.gyro[0];
 	
+<<<<<<< HEAD
+	//complementary filter to get pitch angle
+	sys_state.angle_about_x_axis = (0.9*orientation.x_gyro+0.1*orientation.x_accel);
+	/*****************************************/
+	
+
+
+=======
 	// filter angle data
 	double lp_filtered_output_x = rc_march_filter(&lowpass_x_filt, orientation.x_accel);
 	double hp_filtered_output_x = rc_march_filter(&highpass_x_filt, orientation.x_gyro);
@@ -293,6 +567,7 @@ void collect_data(){
 	/*****************************************/
 	
 
+>>>>>>> master
 	/*****************************************
 	* Find Roll Data
 	*****************************************/
@@ -302,6 +577,14 @@ void collect_data(){
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	orientation.y_gyro = sys_state.angle_about_y_axis + 0.01*data.gyro[1];
 	
+<<<<<<< HEAD
+	
+	//complementary filter to get roll angle
+	sys_state.angle_about_y_axis = (0.9*orientation.y_gyro+0.1*orientation.y_accel);
+	/****************************************/
+
+
+=======
 	// filter angle data
 	double lp_filtered_output_y= rc_march_filter(&lowpass_y_filt, orientation.y_accel);
 	double hp_filtered_output_y = rc_march_filter(&highpass_y_filt, orientation.y_gyro);
@@ -314,6 +597,7 @@ void collect_data(){
 	sys_state.angle_about_y_axis = (lp_filtered_output_y+hp_filtered_output_y + CAPE_MOUNT_ANGLE_Y);
 	
 	/****************************************/
+>>>>>>> master
 
 	//check for various exit conditions AFTER state estimate
 	
@@ -381,9 +665,9 @@ void* battery_checker(void* ptr){
 		while(rc_get_state()!=EXITING){
 			new_v = rc_battery_voltage();
 			// if the value doesn't make sense, use nominal voltage
-			if (new_v>9.0 || new_v<5.0) new_v = V_NOMINAL;
+			if (new_v>9.0 || new_v<5.0) new_v = cfg_setting.V_NOMINAL;
 			sys_state.battery_voltage = new_v;
-			rc_usleep(1000000 / BATTERY_CHECK_HZ);
+			rc_usleep(1000000 / cfg_setting.BATTERY_CHECK_HZ);
 		}
 		return NULL;
 	}
@@ -391,11 +675,46 @@ void* battery_checker(void* ptr){
 /*******************************************************************************
 * int motor_output()
 *
+<<<<<<< HEAD
+* Outputs duty cycle to motors based on number of PID control of # of steps.
+=======
 * Outputs duty cycle to motors based on number of steps.
+>>>>>>> master
 *******************************************************************************/
 int motor_output(){
 	if (controller_arming.motor_on == 1){
 	
+<<<<<<< HEAD
+		int i;
+		//find error between current orientation and setpoint
+		controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
+		
+		//PID control while error too big
+		while(abs(controller_state.error) > 0.1){
+			//set motor direction based on sign of error signal
+			if(controller_state.error<0){
+				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
+			}
+			else{
+				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
+			}
+
+			//pulses to motor based on number of steps
+			for(i=0;i<controller_state.steps;i++){ //maybe need <=
+				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
+				rc_usleep(150); //pulse width
+				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
+				rc_usleep(400); //wait between pulses
+			}
+			//PID
+			controller_state.last_error = controller_state.error;
+			controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
+			controller_state.derivative = controller_state.error - controller_state.last_error;
+			controller_state.integral = controller_state.integral + controller_state.error;
+			controller_state.steps = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_I*controller_state.integral) + (cfg_setting.K_D*controller_state.derivative);
+		}
+		
+=======
 		if(sys_state.WS_duty_signal<0){
 			rc_gpio_set_value_mmap(WS_MOTOR_DIR_PIN,LOW);
 		}
@@ -409,6 +728,7 @@ int motor_output(){
 		rc_gpio_set_value_mmap(WS_MOTOR_CHANNEL,LOW);
 		rc_usleep(400);
 		}
+>>>>>>> master
 	}
 	else{
 		return -1;
@@ -424,8 +744,12 @@ int motor_output(){
 *******************************************************************************/
 void* read_input(void* ptr){
 
+<<<<<<< HEAD
+	
+=======
 	//thread for printing data to screen
 	pthread_t  printf_thread;
+>>>>>>> master
 	printf("Enter command ('help' for command list): \n");
 
 	while(rc_get_state()!=EXITING){		
@@ -460,8 +784,13 @@ void* read_input(void* ptr){
 					//if there isn't OPTION specified:
 					//start printf_thread if running from a terminal
 					//if it was started as a background process then don't bother
+<<<<<<< HEAD
+					else if(isatty(fileno(stdout))){  
+						pthread_create(&printf_thread, NULL, printf_loop, (void*) NULL); //thread for printing data to screen
+=======
 					else if(isatty(fileno(stdout))){ 
 						pthread_create(&printf_thread, NULL, printf_loop, (void*) NULL);
+>>>>>>> master
 						pthread_detach(printf_thread);  //detach thread so it can be closed easier. 
 														//fine to do since it doesn't need to do anything except display stuff on screen
 					}
@@ -470,7 +799,11 @@ void* read_input(void* ptr){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
 						controller_arming.motor_on = 1; //arm motors
+<<<<<<< HEAD
+						sys_state.WS_angle_setpoint = cfg_setting.STEPS_PER_WS_ANGLE_DEGREE*atoi(command_opt); //send # of steps to motor_output()
+=======
 						sys_state.WS_duty_signal = STEPS_PER_WS_ANGLE_DEGREE*atoi(command_opt); //send # of steps to motor_output()
+>>>>>>> master
 						motor_output(); //drive motors
 					}
 					else{
@@ -480,6 +813,11 @@ void* read_input(void* ptr){
 				}
 				else if (!strcmp(command,"exit")){
 					cleanup_everything();
+<<<<<<< HEAD
+					rc_set_state(EXITING);
+					return NULL;
+=======
+>>>>>>> master
 				}
 				else if (!strcmp(command,"help")){
 					print_usage();
@@ -493,7 +831,11 @@ void* read_input(void* ptr){
 		}
 
 		//signal PWM duty to motor driver
+<<<<<<< HEAD
+		//rc_set_motor(WS_MOTOR_CHANNEL, sys_state.WS_angle_setpoint); 
+=======
 		//rc_set_motor(WS_MOTOR_CHANNEL, sys_state.WS_duty_signal); 
+>>>>>>> master
 		//rc_set_motor(BL_MOTOR_CHANNEL_L, BL_MOTOR_POLARITY_L * sys_state.BL_duty_signal_left); 
 		//rc_set_motor(BL_MOTOR_CHANNEL_R, BL_MOTOR_POLARITY_R * sys_state.BL_duty_signal_right); 
 
@@ -505,7 +847,11 @@ void* read_input(void* ptr){
 		//create thread with freq of pwm? where toggles high/low
 		//rc_gpio_set_value(WS_MOTOR_CHANNEL, HIGH);
 
+<<<<<<< HEAD
+		rc_usleep(1000000 / cfg_setting.READ_INPUT_HZ);
+=======
 		rc_usleep(1000000 / READ_INPUT_HZ);
+>>>>>>> master
 	}
 	return NULL;
 }
@@ -526,8 +872,14 @@ void* printf_loop(void* ptr){
 			printf("  Pitch  |");
 			printf("  Roll  |");
 			printf("  WS Steps  |");
+<<<<<<< HEAD
+			printf("  Error  |");
+			//printf("  BL Duty L  |");
+			//printf("  BL Duty R  |");
+=======
 			printf("  BL Duty L  |");
 			printf("  BL Duty R  |");
+>>>>>>> master
 			printf("  Battery Voltage  |");
 			printf("  Armstate  |");
 			printf("\n");
@@ -542,14 +894,15 @@ void* printf_loop(void* ptr){
 			printf("\r");
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%6.2f  |", sys_state.angle_about_y_axis);
-			printf("%8.2f  |", sys_state.WS_duty_signal);
-			printf("%11.2f  |", sys_state.BL_duty_signal_left);
-			printf("%11.2f  |", sys_state.BL_duty_signal_right);
+			printf("%10.2f  |", sys_state.WS_angle_setpoint);
+			printf("%7.2f  |", controller_state.error);
+			//printf("%11.2f  |", sys_state.BL_duty_signal_left);
+			//printf("%11.2f  |", sys_state.BL_duty_signal_right);
 			printf("%17.2f  |", sys_state.battery_voltage);
 			printf("%10.2d  |", controller_arming.armstate);
 			fflush(stdout);
 		}
-		rc_usleep(1000000 / PRINTF_HZ);
+		rc_usleep(1000000 / cfg_setting.PRINTF_HZ);
 	}
 	return NULL;
 }
@@ -560,11 +913,19 @@ void* printf_loop(void* ptr){
 * Prints default arguments to controller
 *******************************************************************************/
 int print_usage(){
+<<<<<<< HEAD
+	printf("\nCommand List: \n");
+	printf("1) display - Displays orientation data. 'display exit' stops display output.\n");
+	printf("2) drive ## - Sets desired angle of ## and sends to weight shift motor. \n");
+	printf("3) exit - Quit control software.\n");
+	printf("4) help - Displays list of commands.\n");
+=======
 
 	printf("display - Displays orientation data. 'display exit' stops display output.\n");
 	printf("drive ## - Sets desired angle of ## and sends to weight shift motor. \n");
 	printf("exit - Quit control software.\n");
 	printf("help - Displays list of commands.\n");
+>>>>>>> master
 	return 0;
 }
 
@@ -597,4 +958,27 @@ void on_pause_released(){
 	if(rc_get_state()==RUNNING)   		rc_set_state(PAUSED);
 	else if(rc_get_state()==PAUSED)	rc_set_state(RUNNING);
 	return;
+<<<<<<< HEAD
+}
+
+char *trimwhitespace(char *str)
+{
+  char *end;
+
+  // Trim leading space
+  while(isspace((unsigned char)*str)) str++;
+
+  if(*str == 0)  // All spaces?
+    return str;
+
+  // Trim trailing space
+  end = str + strlen(str) - 1;
+  while(end > str && isspace((unsigned char)*end)) end--;
+
+  // Write new null terminator
+  *(end+1) = 0;
+
+  return str;
+=======
+>>>>>>> master
 }
