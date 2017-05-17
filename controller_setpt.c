@@ -3,11 +3,11 @@
 #include <libconfig.h>
 
 /*******************************************************************************
-* cfg_settings_t
+* cfg_settings_list_t
 *
 * Holds values of settings read from cfg file.
 *******************************************************************************/
-typedef struct cfg_settings_t{
+typedef struct cfg_settings_list_t{
 
 	int SAMPLE_RATE_HZ;
 
@@ -41,7 +41,10 @@ typedef struct cfg_settings_t{
 	float K_I;
 	float K_D;
 
-} cfg_settings_t;
+	// Lists of Maneuver setpoints
+	float maneuver_swing_position_array[10];
+	float maneuver_swing_timing_array[10];
+} cfg_settings_list_t;
 
 /*******************************************************************************
 * armstate_t
@@ -90,9 +93,11 @@ typedef struct core_state_t{
 	float angle_about_y_axis; 		// body angle radians
 	//float weightshift_dist;			//distance of weight from neutral position -- need to know how to read, wait on physical implementation
 	float battery_voltage; 		// battery voltage
-	float WS_angle_setpoint;			// output of controller to weight shift
+	float *WS_angle_setpoint;			// output of controller to weight shift
 	//float BL_duty_signal_left;			// output of controller to pulley motors
 	//float BL_duty_signal_right;
+	float *setpt_array;
+	float *setpt_timing_array;
 } core_state_t;
 
 /*******************************************************************************
@@ -119,16 +124,17 @@ void* controller_arming_manager(void* ptr);
 void* battery_checker(void* ptr);
 void* printf_loop(void* ptr);
 void* read_input(void* ptr);
-void* motor_output(void* ptr);
+
 
 // regular functions
 int print_usage();
+int motor_output(float setpt_array[], float setpt_timing_array[]);
 int zero_out_controller();
 int disarm_controller();
 int arm_controller();
 int cleanup_everything();
 int get_config_settings();
-char *trimwhitespace( char *str);
+char *trimwhitespace(char *str);
 void on_pause_pressed();
 void on_pause_released();
 
@@ -142,13 +148,14 @@ rc_imu_data_t data;
 orientation_t orientation;
 controller_state_t controller_state;
 config_t cfg;
-cfg_settings_t cfg_setting;
+config_setting_t *cfg_option;
+cfg_settings_list_t cfg_setting;
 
 pthread_t battery_thread;
 pthread_t controller_arming_thread;
 pthread_t read_input_thread;
-pthread_t printf_thread;
-pthread_t motor_thread;
+pthread_t  printf_thread;
+
 /*******************************************************************************
 * main()
 *
@@ -169,25 +176,12 @@ int main(){
 
 	rc_imu_config_t conf = rc_default_imu_config();
 
-
-
 	// make sure controller_arming starts at normal values
 	controller_arming.armstate = DISARMED;
 
 
 	//get configuration settings
 	get_config_settings();
-
-	rc_set_pinmux_mode(cfg_setting.WS_MOTOR_CHANNEL, PINMUX_GPIO);
-	rc_gpio_export(cfg_setting.WS_MOTOR_CHANNEL);
-	rc_gpio_set_dir(cfg_setting.WS_MOTOR_CHANNEL, OUTPUT_PIN);
-	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
-
-
-	rc_set_pinmux_mode(cfg_setting.WS_MOTOR_DIR_PIN, PINMUX_GPIO);
-	rc_gpio_export(cfg_setting.WS_MOTOR_DIR_PIN);
-	rc_gpio_set_dir(cfg_setting.WS_MOTOR_DIR_PIN, OUTPUT_PIN);
-	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
 	/****************************************/
 
 
@@ -401,6 +395,37 @@ int get_config_settings(){
 		fprintf(stderr, "No 'K_D' setting in configuration file.\n");
   	}
 
+	cfg_option = config_lookup(&cfg,"maneuver_swing_position_array");
+	if(cfg_option != NULL){
+		int k = 0;
+		while(1){
+			if (config_setting_get_elem(cfg_option,k) == NULL) {
+					break;
+			}
+			cfg_setting.maneuver_swing_position_array[k] = config_setting_get_float_elem(cfg_option, k);
+
+			k++;
+		}
+	}
+  else{
+		fprintf(stderr, "No 'maneuver_swing_position_array' setting in configuration file.\n");
+  }
+
+	cfg_option = config_lookup(&cfg,"maneuver_swing_timing_array");
+	if(cfg_option != NULL){
+		int k = 0;
+		while(1){
+			if (config_setting_get_elem(cfg_option,k) == NULL) {
+					break;
+			}
+			cfg_setting.maneuver_swing_timing_array[k] = config_setting_get_float_elem(cfg_option, k);
+
+			k++;
+		}
+	}
+	else{
+		fprintf(stderr, "No 'maneuver_swing_timing_array' setting in configuration file.\n");
+	}
 
 	return 0;
 }
@@ -418,8 +443,7 @@ int cleanup_everything(){
 	pthread_cancel(controller_arming_thread);
 	pthread_cancel(battery_thread);
 	pthread_cancel(printf_thread);
-	rc_gpio_unexport(cfg_setting.WS_MOTOR_CHANNEL);
-	rc_gpio_unexport(cfg_setting.WS_MOTOR_DIR_PIN);
+
 	rc_cleanup();
 	return 0;
 }
@@ -447,7 +471,6 @@ void* controller_arming_manager(void* ptr){
 		if(controller_arming.armstate == DISARMED){
 				zero_out_controller();
 				arm_controller();
-				printf("controller armed\n");
 			}
 			else continue;
 	}
@@ -571,50 +594,56 @@ void* battery_checker(void* ptr){
 	}
 
 /*******************************************************************************
-* int motor_output()
+* int motor_output(int setpt_array, setpt_timing_array)
 *
 * Outputs duty cycle to motors based on number of PID control of # of steps.
 *******************************************************************************/
-void* motor_output(void* ptr){
+int motor_output(float setpt_array[], float setpt_timing_array[]){
 	if (controller_arming.motor_on == 1){
-		printf("controlling motors\n" );
+		printf("beginning motor output\n", );
 		int i;
-		//find error between current orientation and setpoint
-		controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
+		int j = 0;
+		while(setpt_array){
 
-		//PID control while error too big
-		while(abs(controller_state.error) > 1.0){
-			//set motor direction based on sign of error signal
-			if(controller_state.error<0){
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
-			}
-			else{
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
+			//find error between current orientation and setpoint
+			controller_state.error = setpt_array[j] - sys_state.angle_about_y_axis;
+
+			//PID control while error too big
+			while(abs(controller_state.error) > 1.0){
+				//set motor direction based on sign of error signal
+				if(controller_state.error<0){
+					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
+				}
+				else{
+					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
+				}
+
+				//pulses to motor based on number of steps
+				for(i=0;i<controller_state.steps;i++){ //maybe need <=
+					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
+					rc_usleep(150); //pulse width
+					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
+					rc_usleep(400); //wait between pulses
+				}
+				//PID
+				controller_state.last_error = controller_state.error;
+				controller_state.error = setpt_array[j] - sys_state.angle_about_y_axis;
+				controller_state.derivative = controller_state.error - controller_state.last_error;
+				controller_state.integral = controller_state.integral + controller_state.error;
+				controller_state.steps = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_I*controller_state.integral) + (cfg_setting.K_D*controller_state.derivative);
 			}
 
-			//pulses to motor based on number of steps
-			for(i=0;i<controller_state.steps;i++){ //maybe need <=
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
-				rc_usleep(150); //pulse width
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
-				rc_usleep(150); //wait between pulses
-			}
-			//PID
-			controller_state.last_error = controller_state.error;
-			controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
-			controller_state.derivative = controller_state.error - controller_state.last_error;
-			controller_state.integral = controller_state.integral + controller_state.error;
-			controller_state.steps = cfg_setting.STEPS_PER_WS_ANGLE_DEGREE*(cfg_setting.K_P*controller_state.error) + (cfg_setting.K_I*controller_state.integral) + (cfg_setting.K_D*controller_state.derivative);
+				rc_usleep(setpt_timing_array[j]);
+
+			j++;
 		}
-
 	}
 	else{
-		return NULL;
+		return -1;
 		printf("Error! Attempt to control unarmed motors\n");
 	}
-	controller_state.steps = 0;
 	controller_arming.motor_on = 0;
-	return NULL;
+	return 0;
 }
 /*******************************************************************************
 * void* read_input(void* ptr)
@@ -668,13 +697,23 @@ void* read_input(void* ptr){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
 						controller_arming.motor_on = 1; //arm motors
-						sys_state.WS_angle_setpoint = atoi(command_opt); //send # of steps to motor_output()
-						pthread_create(&motor_thread, NULL, motor_output, (void*) NULL); //drive motors
-						pthread_detach(motor_thread);
+						sys_state.WS_angle_setpoint = (float *)(cfg_setting.STEPS_PER_WS_ANGLE_DEGREE*atoi(command_opt)); //send # of steps to motor_output()
+						motor_output(sys_state.WS_angle_setpoint,NULL); //drive motors
 					}
 					else{
 						printf("Invalid command.\n");
 						print_usage(); //otherwise show correct command syntax
+					}
+				}
+				else if (!strcmp(command,"maneuver")){
+					if(strcmp(command_opt,"swing")){
+						controller_arming.motor_on = 1; //arm motors
+						sys_state.setpt_array = cfg_setting.maneuver_swing_position_array;
+						sys_state.setpt_timing_array = cfg_setting.maneuver_swing_timing_array;
+						motor_output(sys_state.setpt_array,sys_state.setpt_timing_array);
+					}
+					else{
+						printf("Invalid Maneuver.\n");
 					}
 				}
 				else if (!strcmp(command,"exit")){
@@ -744,7 +783,7 @@ void* printf_loop(void* ptr){
 			printf("\r");
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%6.2f  |", sys_state.angle_about_y_axis);
-			printf("%10.2d  |", controller_state.steps);
+			printf("%10.2f  |", *sys_state.WS_angle_setpoint);
 			printf("%7.2f  |", controller_state.error);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_left);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_right);
@@ -802,7 +841,7 @@ void on_pause_released(){
 	return;
 }
 
-char *trimwhitespace(char *str)
+char * trimwhitespace(char *str)
 {
   char *end;
 
