@@ -1,7 +1,6 @@
 # scaled_paraglider_testbed
 Control software for Scaled Paraglider Testbed senior design project.
 
-config.c -- Configuration file, list of settings that can easily be changed.
+paraglider_config.cfg -- Configuration file, list of settings that can easily be changed without needing to recompile.
 controller.c -- Main control code.
-roboticscape.h -- Robotics libraries from Strawson Design for use with Beaglebone Blue
-usefulincludes.h -- Assorted helpful libraries from Strawson Design for use with Beaglebone Blue
+install.sh -- Installs dependencies.
