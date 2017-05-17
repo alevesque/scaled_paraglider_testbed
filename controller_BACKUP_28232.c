@@ -72,12 +72,17 @@ typedef struct controller_arming_t{ //setpoints
 typedef struct controller_state_t{
 		//setup controller values
 		int steps;
-
+<<<<<<< HEAD
+		int error;
+		int last_error;
+		int derivative;
+		int integral;
+=======
 		float error;
 		float last_error;
 		float derivative;
 		float integral;
-
+>>>>>>> develop
 } controller_state_t;
 
 /*******************************************************************************
@@ -121,17 +126,27 @@ void* controller_arming_manager(void* ptr);
 void* battery_checker(void* ptr);
 void* printf_loop(void* ptr);
 void* read_input(void* ptr);
+<<<<<<< HEAD
+
+
+// regular functions
+int print_usage();
+int motor_output();
+=======
 void* motor_output(void* ptr);
 
 // regular functions
 int print_usage();
+>>>>>>> develop
 int zero_out_controller();
 int disarm_controller();
 int arm_controller();
 int cleanup_everything();
 int get_config_settings();
+<<<<<<< HEAD
+=======
 char *trimwhitespace( char *str);
-
+>>>>>>> develop
 void on_pause_pressed();
 void on_pause_released();
 
@@ -150,9 +165,13 @@ cfg_settings_t cfg_setting;
 pthread_t battery_thread;
 pthread_t controller_arming_thread;
 pthread_t read_input_thread;
+<<<<<<< HEAD
+pthread_t  printf_thread;
+
+=======
 pthread_t printf_thread;
 pthread_t motor_thread;
-
+>>>>>>> develop
 /*******************************************************************************
 * main()
 *
@@ -172,6 +191,17 @@ int main(){
 	rc_set_state(UNINITIALIZED);
 
 	rc_imu_config_t conf = rc_default_imu_config();
+<<<<<<< HEAD
+
+	// make sure controller_arming starts at normal values
+	controller_arming.armstate = DISARMED;
+
+
+	//get configuration settings
+	get_config_settings();
+=======
+
+
 
 	// make sure controller_arming starts at normal values
 	controller_arming.armstate = DISARMED;
@@ -190,7 +220,7 @@ int main(){
 	rc_gpio_export(cfg_setting.WS_MOTOR_DIR_PIN);
 	rc_gpio_set_dir(cfg_setting.WS_MOTOR_DIR_PIN, OUTPUT_PIN);
 	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
-
+>>>>>>> develop
 	/****************************************/
 
 
@@ -421,10 +451,12 @@ int cleanup_everything(){
 	pthread_cancel(controller_arming_thread);
 	pthread_cancel(battery_thread);
 	pthread_cancel(printf_thread);
+<<<<<<< HEAD
 
+=======
 	rc_gpio_unexport(cfg_setting.WS_MOTOR_CHANNEL);
 	rc_gpio_unexport(cfg_setting.WS_MOTOR_DIR_PIN);
-
+>>>>>>> develop
 	rc_cleanup();
 	return 0;
 }
@@ -452,6 +484,10 @@ void* controller_arming_manager(void* ptr){
 		if(controller_arming.armstate == DISARMED){
 				zero_out_controller();
 				arm_controller();
+<<<<<<< HEAD
+=======
+				printf("controller armed\n");
+>>>>>>> develop
 			}
 			else continue;
 	}
@@ -467,7 +503,15 @@ void* controller_arming_manager(void* ptr){
 * Finds orientation from sensors.
 *******************************************************************************/
 void collect_data(){
+<<<<<<< HEAD
 
+
+
+=======
+
+
+
+>>>>>>> develop
 	/*****************************************
 	* Find Pitch Data
 	*****************************************/
@@ -568,6 +612,8 @@ void* battery_checker(void* ptr){
 			if (new_v>9.0 || new_v<5.0) new_v = cfg_setting.V_NOMINAL;
 			sys_state.battery_voltage = new_v;
 			rc_usleep(1000000 / cfg_setting.BATTERY_CHECK_HZ);
+<<<<<<< HEAD
+=======
 		}
 		return NULL;
 	}
@@ -607,6 +653,7 @@ void* motor_output(void* ptr){
 			controller_state.derivative = controller_state.error - controller_state.last_error;
 			controller_state.integral = controller_state.integral + controller_state.error;
 			controller_state.steps = cfg_setting.STEPS_PER_WS_ANGLE_DEGREE*(cfg_setting.K_P*controller_state.error) + (cfg_setting.K_I*controller_state.integral) + (cfg_setting.K_D*controller_state.derivative);
+>>>>>>> develop
 		}
 
 	}
@@ -886,7 +933,11 @@ void* printf_loop(void* ptr){
 			printf("\r");
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%6.2f  |", sys_state.angle_about_y_axis);
+<<<<<<< HEAD
+			printf("%10.2f  |", sys_state.WS_angle_setpoint);
+=======
 			printf("%10.2d  |", controller_state.steps);
+>>>>>>> develop
 			printf("%7.2f  |", controller_state.error);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_left);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_right);

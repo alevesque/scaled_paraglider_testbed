@@ -72,12 +72,10 @@ typedef struct controller_arming_t{ //setpoints
 typedef struct controller_state_t{
 		//setup controller values
 		int steps;
-
-		float error;
-		float last_error;
-		float derivative;
-		float integral;
-
+		int error;
+		int last_error;
+		int derivative;
+		int integral;
 } controller_state_t;
 
 /*******************************************************************************
@@ -121,17 +119,16 @@ void* controller_arming_manager(void* ptr);
 void* battery_checker(void* ptr);
 void* printf_loop(void* ptr);
 void* read_input(void* ptr);
-void* motor_output(void* ptr);
+
 
 // regular functions
 int print_usage();
+int motor_output();
 int zero_out_controller();
 int disarm_controller();
 int arm_controller();
 int cleanup_everything();
 int get_config_settings();
-char *trimwhitespace( char *str);
-
 void on_pause_pressed();
 void on_pause_released();
 
@@ -150,8 +147,7 @@ cfg_settings_t cfg_setting;
 pthread_t battery_thread;
 pthread_t controller_arming_thread;
 pthread_t read_input_thread;
-pthread_t printf_thread;
-pthread_t motor_thread;
+pthread_t  printf_thread;
 
 /*******************************************************************************
 * main()
@@ -179,18 +175,6 @@ int main(){
 
 	//get configuration settings
 	get_config_settings();
-
-	rc_set_pinmux_mode(cfg_setting.WS_MOTOR_CHANNEL, PINMUX_GPIO);
-	rc_gpio_export(cfg_setting.WS_MOTOR_CHANNEL);
-	rc_gpio_set_dir(cfg_setting.WS_MOTOR_CHANNEL, OUTPUT_PIN);
-	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
-
-
-	rc_set_pinmux_mode(cfg_setting.WS_MOTOR_DIR_PIN, PINMUX_GPIO);
-	rc_gpio_export(cfg_setting.WS_MOTOR_DIR_PIN);
-	rc_gpio_set_dir(cfg_setting.WS_MOTOR_DIR_PIN, OUTPUT_PIN);
-	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
-
 	/****************************************/
 
 
@@ -422,9 +406,6 @@ int cleanup_everything(){
 	pthread_cancel(battery_thread);
 	pthread_cancel(printf_thread);
 
-	rc_gpio_unexport(cfg_setting.WS_MOTOR_CHANNEL);
-	rc_gpio_unexport(cfg_setting.WS_MOTOR_DIR_PIN);
-
 	rc_cleanup();
 	return 0;
 }
@@ -467,6 +448,8 @@ void* controller_arming_manager(void* ptr){
 * Finds orientation from sensors.
 *******************************************************************************/
 void collect_data(){
+
+
 
 	/*****************************************
 	* Find Pitch Data
@@ -571,148 +554,6 @@ void* battery_checker(void* ptr){
 		}
 		return NULL;
 	}
-
-/*******************************************************************************
-* int motor_output()
-*
-* Outputs duty cycle to motors based on number of PID control of # of steps.
-*******************************************************************************/
-void* motor_output(void* ptr){
-	if (controller_arming.motor_on == 1){
-		printf("controlling motors\n" );
-		int i;
-		//find error between current orientation and setpoint
-		controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
-
-		//PID control while error too big
-		while(abs(controller_state.error) > 1.0){
-			//set motor direction based on sign of error signal
-			if(controller_state.error<0){
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
-			}
-			else{
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
-			}
-
-			//pulses to motor based on number of steps
-			for(i=0;i<controller_state.steps;i++){ //maybe need <=
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
-				rc_usleep(150); //pulse width
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
-				rc_usleep(150); //wait between pulses
-			}
-			//PID
-			controller_state.last_error = controller_state.error;
-			controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
-			controller_state.derivative = controller_state.error - controller_state.last_error;
-			controller_state.integral = controller_state.integral + controller_state.error;
-			controller_state.steps = cfg_setting.STEPS_PER_WS_ANGLE_DEGREE*(cfg_setting.K_P*controller_state.error) + (cfg_setting.K_I*controller_state.integral) + (cfg_setting.K_D*controller_state.derivative);
-		}
-
-	}
-	else{
-		return NULL;
-		printf("Error! Attempt to control unarmed motors\n");
-	}
-	controller_state.steps = 0;
-	controller_arming.motor_on = 0;
-	return NULL;
-}
-/*******************************************************************************
-* void* read_input(void* ptr)
-*
-* Reads user input from command line.
-*******************************************************************************/
-void* read_input(void* ptr){
-
-
-	printf("Enter command ('help' for command list): \n");
-
-	while(rc_get_state()!=EXITING){
-
-		char c[21]; //user input array
-		char c_trimmed[21]; //cleaned up user input array
-
-		//read input from keyboard
-		if (fgets(c,20,stdin) != NULL){ //if there is input:
-			strcpy(c_trimmed,trimwhitespace(c)); //delete trailing and leading whitespace
-			if (c_trimmed[0] != '\n' && c_trimmed[0] != '\0'){ //if what is left is not a newline or NULL
-
-				char *command,*command_opt;
-
-				command = strtok(c_trimmed," "); //break input into format 'COMMMAND OPTION'
-				command_opt = strtok(NULL," ");
-
-
-
-
-				if(!strcmp(command,"display")){ //if COMMAND is 'display':
-					if(command_opt != NULL){ //and if there is an OPTION specified
-						if(!strcmp(command_opt,"exit")){ //and that option is to exit
-
-							pthread_cancel(printf_thread); //exit display thread
-						}
-						else{
-							print_usage(); //otherwise show correct command syntax
-						}
-					}
-
-					//if there isn't OPTION specified:
-					//start printf_thread if running from a terminal
-					//if it was started as a background process then don't bother
-					else if(isatty(fileno(stdout))){
-						pthread_create(&printf_thread, NULL, printf_loop, (void*) NULL); //thread for printing data to screen
-						pthread_detach(printf_thread);  //detach thread so it can be closed easier.
-														//fine to do since it doesn't need to do anything except display stuff on screen
-					}
-				}
-				else if(!strcmp(command,"drive")){ //if COMMAND is 'drive'
-					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
-					if(command_opt != NULL){ //if there is an arguement passed
-						controller_arming.motor_on = 1; //arm motors
-						sys_state.WS_angle_setpoint = atoi(command_opt); //send # of steps to motor_output()
-						pthread_create(&motor_thread, NULL, motor_output, (void*) NULL); //drive motors
-						pthread_detach(motor_thread);
-					}
-					else{
-						printf("Invalid command.\n");
-						print_usage(); //otherwise show correct command syntax
-					}
-				}
-				else if (!strcmp(command,"exit")){
-					cleanup_everything();
-					rc_set_state(EXITING);
-					return NULL;
-				}
-				else if (!strcmp(command,"help")){
-					print_usage();
-				}
-				else{
-					printf("Invalid command.\n");
-					print_usage();
-				}
-
-			}
-		}
-
-		//signal PWM duty to motor driver
-		//rc_set_motor(WS_MOTOR_CHANNEL, sys_state.WS_angle_setpoint);
-		//rc_set_motor(BL_MOTOR_CHANNEL_L, BL_MOTOR_POLARITY_L * sys_state.BL_duty_signal_left);
-		//rc_set_motor(BL_MOTOR_CHANNEL_R, BL_MOTOR_POLARITY_R * sys_state.BL_duty_signal_right);
-
-		//can use servo rails maybe
-		//need to map duty cycle to us pulse width (NOT MODULATED BY FREQ, different from PWM)
-		//rc_send_servo_pulse_us(WS_MOTOR_CHANNEL, int us)
-
-		//or gps headers as gpio
-		//create thread with freq of pwm? where toggles high/low
-		//rc_gpio_set_value(WS_MOTOR_CHANNEL, HIGH);
-
-		rc_usleep(1000000 / cfg_setting.READ_INPUT_HZ);
-	}
-	return NULL;
-}
-
 
 /*******************************************************************************
 * int motor_output()
@@ -886,7 +727,7 @@ void* printf_loop(void* ptr){
 			printf("\r");
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%6.2f  |", sys_state.angle_about_y_axis);
-			printf("%10.2d  |", controller_state.steps);
+			printf("%10.2f  |", sys_state.WS_angle_setpoint);
 			printf("%7.2f  |", controller_state.error);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_left);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_right);
