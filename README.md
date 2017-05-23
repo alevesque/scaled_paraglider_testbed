@@ -4,10 +4,10 @@ Control software for Scaled Paraglider Testbed senior design project.
 Type make in program directory to build.
 
 Files:
-paraglider_config.cfg -- Configuration file, list of settings that can easily be changed without needing to recompile.
-controller.c -- Main control code.
-install.sh -- Installs dependency packages.
-Makefile -- compiles with correct dependencies and flags.
+- paraglider_config.cfg -- Configuration file, list of settings that can easily be changed without needing to recompile.
+- controller.c -- Main control code.
+- install.sh -- Installs dependency packages.
+- Makefile -- compiles with correct dependencies and flags.
 
 To run: 'sudo ./controller'
 
