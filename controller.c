@@ -432,7 +432,7 @@ void* motor_output(void* ptr){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
 			}
 			/*checks if errors were neglibible so that it doesn't send constant high if there was zero delay*/
-				if(controller_state.last_error > 2.0  && controller_state.error > 2.0){
+				if(abs(controller_state.last_error) > 2.0  && abs(controller_state.error) > 2.0){
 					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
 				}
 				rc_usleep(150); //pulse width
@@ -444,9 +444,9 @@ void* motor_output(void* ptr){
 			controller_state.derivative = controller_state.error - controller_state.last_error;
 			WS_control_signal = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_D*controller_state.derivative);
 
-			if(WS_control_signal != 0.0){
+			if(abs(WS_control_signal) >= 0.5){
 				/*assuming inverse relationship btwn error and delay*/
-				cfg_setting.PWM_DELAY = 1000*cfg_setting.K_P*round(1/WS_control_signal);
+				cfg_setting.PWM_DELAY = 1000*cfg_setting.K_P*(1/round(abs(WS_control_signal)));
 				rc_usleep(cfg_setting.PWM_DELAY); //wait between pulses
 			}
 		}
@@ -505,7 +505,7 @@ void* read_input(void* ptr){
 					}
 				}
 				else if (!strcmp(command,"swing")){
-					
+
 				}
 				else if (!strcmp(command,"exit")){
 					cleanup_everything();
@@ -543,7 +543,7 @@ void* printf_loop(void* ptr){
 			printf("\nRUNNING\n");
 			printf("  Pitch  |");
 			printf("  Roll  |");
-			printf("  WS Steps  |");
+			printf("  WS Delay  |");
 			printf("  Error  |");
 			//printf("  BL Duty L  |");
 			//printf("  BL Duty R  |");
@@ -560,7 +560,7 @@ void* printf_loop(void* ptr){
 			printf("\r");
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%6.2f  |", sys_state.angle_about_y_axis);
-			printf("%10.2d  |", controller_state.steps);
+			printf("%10.2d  |", cfg_setting.PWM_DELAY);
 			printf("%7.2f  |", controller_state.error);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_left);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_right);
