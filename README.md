@@ -12,7 +12,7 @@ Files:
 To run: 'sudo ./controller'
 
 Command List: 
-1) display - Displays orientation data. 'display exit' stops display output.
-2) drive ## - Sets desired angle of ## and sends to weight shift motor. 
-3) exit - Quit control software.
-4) help - Displays list of commands.
+- display - Displays orientation data. 'display exit' stops display output.
+- drive ## - Sets desired angle of ## and sends to weight shift motor. 
+- exit - Quit control software.
+- help - Displays list of commands.
