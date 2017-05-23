@@ -17,7 +17,7 @@ typedef struct cfg_settings_t{
 	float CAPE_MOUNT_ANGLE_Y;
 	float CAPE_MOUNT_ANGLE_Z;
 	int V_NOMINAL;
-
+	int PWM_DELAY;
 	// electrical hookups
 	int WS_MOTOR_CHANNEL;
 	int WS_MOTOR_DIR_PIN;
@@ -32,7 +32,6 @@ typedef struct cfg_settings_t{
 
 	// Thread Loop Rates
 	int	BATTERY_CHECK_HZ;
-	int CONTROLLER_ARMING_MANAGER_HZ;
 	int	PRINTF_HZ;
 	int	READ_INPUT_HZ;
 
@@ -44,27 +43,6 @@ typedef struct cfg_settings_t{
 } cfg_settings_t;
 
 /*******************************************************************************
-* armstate_t
-*
-* ARMED or DISARMED to indicate if the controller is running
-*******************************************************************************/
-typedef enum armstate_t{
-	ARMED,
-	DISARMED
-} armstate_t;
-
-/*******************************************************************************
-* controller_arming_t
-*
-* Controller arming state written to by controller_arming_manager and read by the controller.
-*******************************************************************************/
-typedef struct controller_arming_t{ //setpoints
-	armstate_t armstate;	// see armstate_t declaration
-	int motor_on;
-} controller_arming_t;
-
-
-/*******************************************************************************
 * controller_state_t
 *
 * This is the system state written to by the controller.
@@ -72,12 +50,10 @@ typedef struct controller_arming_t{ //setpoints
 typedef struct controller_state_t{
 		//setup controller values
 		int steps;
-
 		float error;
 		float last_error;
 		float derivative;
 		float integral;
-
 } controller_state_t;
 
 /*******************************************************************************
@@ -86,15 +62,10 @@ typedef struct controller_state_t{
 * This is the physical system state.
 *******************************************************************************/
 typedef struct core_state_t{
-	//float right_pulley_angle;	// pulley rotation
-	//float left_pulley_angle;
 	float angle_about_x_axis; 		// body angle radians
 	float angle_about_y_axis; 		// body angle radians
-	//float weightshift_dist;			//distance of weight from neutral position -- need to know how to read, wait on physical implementation
 	float battery_voltage; 		// battery voltage
 	float WS_angle_setpoint;			// output of controller to weight shift
-	//float BL_duty_signal_left;			// output of controller to pulley motors
-	//float BL_duty_signal_right;
 } core_state_t;
 
 /*******************************************************************************
@@ -117,7 +88,6 @@ typedef struct orientation_t{
 void collect_data();
 
 // threads
-void* controller_arming_manager(void* ptr);
 void* battery_checker(void* ptr);
 void* printf_loop(void* ptr);
 void* read_input(void* ptr);
@@ -125,22 +95,14 @@ void* motor_output(void* ptr);
 
 // regular functions
 int print_usage();
-int zero_out_controller();
-int disarm_controller();
-int arm_controller();
 int cleanup_everything();
 int get_config_settings();
 char *trimwhitespace( char *str);
-
-void on_pause_pressed();
-void on_pause_released();
-
 
 /*******************************************************************************
 * Global Variables
 *******************************************************************************/
 core_state_t sys_state;
-controller_arming_t controller_arming;
 rc_imu_data_t data;
 orientation_t orientation;
 controller_state_t controller_state;
@@ -148,7 +110,6 @@ config_t cfg;
 cfg_settings_t cfg_setting;
 
 pthread_t battery_thread;
-pthread_t controller_arming_thread;
 pthread_t read_input_thread;
 pthread_t printf_thread;
 pthread_t motor_thread;
@@ -156,7 +117,7 @@ pthread_t motor_thread;
 /*******************************************************************************
 * main()
 *
-* Initialize the filters, IMU, DSM, threads, & wait until shut down
+* Initialize the filters, IMU, threads, & wait until shut down
 *******************************************************************************/
 int main(){
 
@@ -173,10 +134,6 @@ int main(){
 
 	rc_imu_config_t conf = rc_default_imu_config();
 
-	// make sure controller_arming starts at normal values
-	controller_arming.armstate = DISARMED;
-
-
 	//get configuration settings
 	get_config_settings();
 
@@ -190,28 +147,12 @@ int main(){
 	rc_gpio_export(cfg_setting.WS_MOTOR_DIR_PIN);
 	rc_gpio_set_dir(cfg_setting.WS_MOTOR_DIR_PIN, OUTPUT_PIN);
 	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
-
 	/****************************************/
-
-
-	// set up button handlers
-	rc_set_pause_pressed_func(&on_pause_pressed);
-	rc_set_mode_released_func(&on_pause_released);
-
-
-	//can use gps header for gpio if needed, where WS_MOTOR_CHANNEL is the gpio pin #
-	//rc_gpio_set_dir(WS_MOTOR_CHANNEL, OUTPUT_PIN);
-	//rc_set_pinmux_mode(WS_MOTOR_CHANNEL, PINMUX_PWM);
-
-
-
 
 	// start a thread to slowly sample battery
 	pthread_create(&battery_thread, NULL, battery_checker, (void*) NULL);
 	// wait for the battery thread to make the first read
 	while(sys_state.battery_voltage==0 && rc_get_state()!=EXITING) usleep(1000);
-
-
 
 	// set up IMU configuration
 	conf.dmp_sample_rate = cfg_setting.SAMPLE_RATE_HZ;
@@ -224,11 +165,6 @@ int main(){
 		printf("ERROR: IMU initialization failed!\n");
 		return -1;
 	}
-
-
-	// start thread to control arming/disarming controller.
-	pthread_create(&controller_arming_thread, NULL, controller_arming_manager, (void*) NULL);
-
 
 	//start thread for reading user input
 	pthread_create(&read_input_thread, NULL, read_input, (void*) NULL);
@@ -247,9 +183,6 @@ int main(){
 	while(rc_get_state()!=EXITING){
 		rc_usleep(10000);
 	}
-
-
-
 	//now exiting
 	cleanup_everything();
 	pthread_cancel(read_input_thread);
@@ -323,6 +256,12 @@ int get_config_settings(){
   	else{
 		fprintf(stderr, "No 'WS_MOTOR_DIR_PIN' setting in configuration file.\n");
   	}
+		if(config_lookup_int(&cfg, "PWM_DELAY", &cfg_value_int)){
+    	cfg_setting.PWM_DELAY = cfg_value_int;
+	}
+  	else{
+		fprintf(stderr, "No 'PWM_DELAY' setting in configuration file.\n");
+  	}
   	/*
   	if(config_lookup_int(&cfg, "BL_MOTOR_CHANNEL_L", &cfg_value_int)){
     	cfg_setting.BL_MOTOR_CHANNEL_L = cfg_value_int;
@@ -367,12 +306,6 @@ int get_config_settings(){
   	else{
 		fprintf(stderr, "No 'BATTERY_CHECK_HZ' setting in configuration file.\n");
   	}
-  	if(config_lookup_int(&cfg, "CONTROLLER_ARMING_MANAGER_HZ", &cfg_value_int)){
-    	cfg_setting.CONTROLLER_ARMING_MANAGER_HZ = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'CONTROLLER_ARMING_MANAGER_HZ' setting in configuration file.\n");
-  	}
   	if(config_lookup_int(&cfg, "PRINTF_HZ", &cfg_value_int)){
     	cfg_setting.PRINTF_HZ = cfg_value_int;
 	}
@@ -404,7 +337,6 @@ int get_config_settings(){
 		fprintf(stderr, "No 'K_D' setting in configuration file.\n");
   	}
 
-
 	return 0;
 }
 
@@ -416,49 +348,14 @@ int get_config_settings(){
 *******************************************************************************/
 int cleanup_everything(){
 	rc_power_off_imu();
-	config_destroy(&cfg);
 	//rc_set_cpu_freq(FREQ_ONDEMAND);
-	pthread_cancel(controller_arming_thread);
 	pthread_cancel(battery_thread);
 	pthread_cancel(printf_thread);
-
 	rc_gpio_unexport(cfg_setting.WS_MOTOR_CHANNEL);
 	rc_gpio_unexport(cfg_setting.WS_MOTOR_DIR_PIN);
-
+	config_destroy(&cfg);
 	rc_cleanup();
 	return 0;
-}
-
-/*******************************************************************************
-* void* controller_arming_manager(void* ptr)
-*
-* Detects start conditions to control arming the controller.
-*******************************************************************************/
-void* controller_arming_manager(void* ptr){
-
-	disarm_controller();
-	rc_usleep(2500000);
-
-	while(rc_get_state()!=EXITING){
-		// sleep at beginning of loop so we can use the 'continue' statement
-		rc_usleep(1000000/cfg_setting.CONTROLLER_ARMING_MANAGER_HZ);
-
-		// nothing to do if paused, go back to beginning of loop
-		if(rc_get_state() != RUNNING) continue;
-
-		// if we got here the state is RUNNING, but controller is not
-		// necessarily armed. If DISARMED, wait for the user to send start signal
-		// which will we detected by is_flying()
-		if(controller_arming.armstate == DISARMED){
-				zero_out_controller();
-				arm_controller();
-			}
-			else continue;
-	}
-
-	// if state becomes EXITING the above loop exists and we disarm here
-	disarm_controller();
-	return NULL;
 }
 
 /*******************************************************************************
@@ -481,8 +378,6 @@ void collect_data(){
 	sys_state.angle_about_x_axis = (0.9*orientation.x_gyro+0.1*orientation.x_accel);
 	/*****************************************/
 
-
-
 	/*****************************************
 	* Find Roll Data
 	*****************************************/
@@ -492,67 +387,11 @@ void collect_data(){
 	// integrates the gyroscope angle rate using Euler's method to get the angle
 	orientation.y_gyro = sys_state.angle_about_y_axis + 0.01*data.gyro[1];
 
-
 	//complementary filter to get roll angle
 	sys_state.angle_about_y_axis = (0.9*orientation.y_gyro+0.1*orientation.y_accel);
 	/****************************************/
 
-
-
-	//check for various exit conditions AFTER state estimate
-
-	if(rc_get_state() == EXITING){
-		//rc_disable_servo_power_rail()
-		rc_disable_motors();
-		return;
-	}
-	// if controller is still ARMED while state is PAUSED, disarm it
-	if(rc_get_state()!=RUNNING && controller_arming.armstate==ARMED){
-		disarm_controller();
-		return;
-	}
-	// exit if the controller is disarmed
-	if(controller_arming.armstate==DISARMED){
-		return;
-	}
-
 	return;
-}
-
-/*******************************************************************************
-* int zero_out_controller()
-*
-* Sets all controller values to zero.
-*******************************************************************************/
-int zero_out_controller(){
-	rc_set_motor_all(0);
-	return 0;
-}
-
-/*******************************************************************************
-* int arm_controller()
-*
-* Turns the motors on and initialize their values.
-*******************************************************************************/
-int arm_controller(){
-	zero_out_controller();
-	controller_arming.armstate = ARMED;
-	rc_enable_motors();
-
-	//can also use servo rails if needed
-	// rc_enable_servo_power_rail();
-	return 0;
-}
-
-/*******************************************************************************
-* int disarm_controller()
-*
-* Disable motors in case something happens.
-*******************************************************************************/
-int disarm_controller(){
-	rc_disable_motors();
-	controller_arming.armstate = DISARMED;
-	return 0;
 }
 
 /*******************************************************************************
@@ -573,19 +412,19 @@ void* battery_checker(void* ptr){
 	}
 
 /*******************************************************************************
-* int motor_output()
+* void* motor_output(void* ptr)
 *
-* Outputs duty cycle to motors based on number of PID control of # of steps.
+* Outputs PWM to motors based on number of PID control of PWM delay.
 *******************************************************************************/
 void* motor_output(void* ptr){
-	if (controller_arming.motor_on == 1){
 		printf("controlling motors\n" );
 		int i;
 		//find error between current orientation and setpoint
 		controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
 
 		//PID control while error too big
-		while(abs(controller_state.error) > 1.0){
+		while(abs(controller_state.error) > 0.5){
+
 			//set motor direction based on sign of error signal
 			if(controller_state.error<0){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
@@ -599,7 +438,7 @@ void* motor_output(void* ptr){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
 				rc_usleep(150); //pulse width
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
-				rc_usleep(150); //wait between pulses
+				rc_usleep(cfg_setting.PWM_DELAY); //wait between pulses
 			}
 			//PID
 			controller_state.last_error = controller_state.error;
@@ -607,15 +446,10 @@ void* motor_output(void* ptr){
 			controller_state.derivative = controller_state.error - controller_state.last_error;
 			controller_state.integral = controller_state.integral + controller_state.error;
 			controller_state.steps = cfg_setting.STEPS_PER_WS_ANGLE_DEGREE*(cfg_setting.K_P*controller_state.error) + (cfg_setting.K_I*controller_state.integral) + (cfg_setting.K_D*controller_state.derivative);
-		}
 
-	}
-	else{
-		return NULL;
-		printf("Error! Attempt to control unarmed motors\n");
-	}
+		}
+	printf("exiting motor output\n");
 	controller_state.steps = 0;
-	controller_arming.motor_on = 0;
 	return NULL;
 }
 /*******************************************************************************
@@ -624,7 +458,6 @@ void* motor_output(void* ptr){
 * Reads user input from command line.
 *******************************************************************************/
 void* read_input(void* ptr){
-
 
 	printf("Enter command ('help' for command list): \n");
 
@@ -638,18 +471,14 @@ void* read_input(void* ptr){
 			strcpy(c_trimmed,trimwhitespace(c)); //delete trailing and leading whitespace
 			if (c_trimmed[0] != '\n' && c_trimmed[0] != '\0'){ //if what is left is not a newline or NULL
 
+				/* break input into format 'COMMMAND OPTION' */
 				char *command,*command_opt;
-
-				command = strtok(c_trimmed," "); //break input into format 'COMMMAND OPTION'
+				command = strtok(c_trimmed," ");
 				command_opt = strtok(NULL," ");
-
-
-
 
 				if(!strcmp(command,"display")){ //if COMMAND is 'display':
 					if(command_opt != NULL){ //and if there is an OPTION specified
 						if(!strcmp(command_opt,"exit")){ //and that option is to exit
-
 							pthread_cancel(printf_thread); //exit display thread
 						}
 						else{
@@ -669,8 +498,7 @@ void* read_input(void* ptr){
 				else if(!strcmp(command,"drive")){ //if COMMAND is 'drive'
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
-						controller_arming.motor_on = 1; //arm motors
-						sys_state.WS_angle_setpoint = atoi(command_opt); //send # of steps to motor_output()
+						sys_state.WS_angle_setpoint = atoi(command_opt); //send angle to motor_output()
 						pthread_create(&motor_thread, NULL, motor_output, (void*) NULL); //drive motors
 						pthread_detach(motor_thread);
 					}
@@ -694,159 +522,6 @@ void* read_input(void* ptr){
 
 			}
 		}
-
-		//signal PWM duty to motor driver
-		//rc_set_motor(WS_MOTOR_CHANNEL, sys_state.WS_angle_setpoint);
-		//rc_set_motor(BL_MOTOR_CHANNEL_L, BL_MOTOR_POLARITY_L * sys_state.BL_duty_signal_left);
-		//rc_set_motor(BL_MOTOR_CHANNEL_R, BL_MOTOR_POLARITY_R * sys_state.BL_duty_signal_right);
-
-		//can use servo rails maybe
-		//need to map duty cycle to us pulse width (NOT MODULATED BY FREQ, different from PWM)
-		//rc_send_servo_pulse_us(WS_MOTOR_CHANNEL, int us)
-
-		//or gps headers as gpio
-		//create thread with freq of pwm? where toggles high/low
-		//rc_gpio_set_value(WS_MOTOR_CHANNEL, HIGH);
-
-		rc_usleep(1000000 / cfg_setting.READ_INPUT_HZ);
-	}
-	return NULL;
-}
-
-
-/*******************************************************************************
-* int motor_output()
-*
-* Outputs duty cycle to motors based on number of PID control of # of steps.
-*******************************************************************************/
-int motor_output(){
-	if (controller_arming.motor_on == 1){
-
-		int i;
-		//find error between current orientation and setpoint
-		controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
-
-		//PID control while error too big
-		while(abs(controller_state.error) > 1.0){
-			//set motor direction based on sign of error signal
-			if(controller_state.error<0){
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
-			}
-			else{
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
-			}
-
-			//pulses to motor based on number of steps
-			for(i=0;i<controller_state.steps;i++){ //maybe need <=
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
-				rc_usleep(150); //pulse width
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
-				rc_usleep(400); //wait between pulses
-			}
-			//PID
-			controller_state.last_error = controller_state.error;
-			controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
-			controller_state.derivative = controller_state.error - controller_state.last_error;
-			controller_state.integral = controller_state.integral + controller_state.error;
-			controller_state.steps = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_I*controller_state.integral) + (cfg_setting.K_D*controller_state.derivative);
-		}
-
-	}
-	else{
-		return -1;
-		printf("Error! Attempt to control unarmed motors\n");
-	}
-	controller_arming.motor_on = 0;
-	return 0;
-}
-/*******************************************************************************
-* void* read_input(void* ptr)
-*
-* Reads user input from command line.
-*******************************************************************************/
-void* read_input(void* ptr){
-
-
-	printf("Enter command ('help' for command list): \n");
-
-	while(rc_get_state()!=EXITING){
-
-		char c[21]; //user input array
-		char c_trimmed[21]; //cleaned up user input array
-
-		//read input from keyboard
-		if (fgets(c,20,stdin) != NULL){ //if there is input:
-			strcpy(c_trimmed,trimwhitespace(c)); //delete trailing and leading whitespace
-			if (c_trimmed[0] != '\n' && c_trimmed[0] != '\0'){ //if what is left is not a newline or NULL
-
-				char *command,*command_opt;
-
-				command = strtok(c_trimmed," "); //break input into format 'COMMMAND OPTION'
-				command_opt = strtok(NULL," ");
-
-
-
-
-				if(!strcmp(command,"display")){ //if COMMAND is 'display':
-					if(command_opt != NULL){ //and if there is an OPTION specified
-						if(!strcmp(command_opt,"exit")){ //and that option is to exit
-
-							pthread_cancel(printf_thread); //exit display thread
-						}
-						else{
-							print_usage(); //otherwise show correct command syntax
-						}
-					}
-
-					//if there isn't OPTION specified:
-					//start printf_thread if running from a terminal
-					//if it was started as a background process then don't bother
-					else if(isatty(fileno(stdout))){
-						pthread_create(&printf_thread, NULL, printf_loop, (void*) NULL); //thread for printing data to screen
-						pthread_detach(printf_thread);  //detach thread so it can be closed easier.
-														//fine to do since it doesn't need to do anything except display stuff on screen
-					}
-				}
-				else if(!strcmp(command,"drive")){ //if COMMAND is 'drive'
-					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
-					if(command_opt != NULL){ //if there is an arguement passed
-						controller_arming.motor_on = 1; //arm motors
-						sys_state.WS_angle_setpoint = cfg_setting.STEPS_PER_WS_ANGLE_DEGREE*atoi(command_opt); //send # of steps to motor_output()
-						motor_output(); //drive motors
-					}
-					else{
-						printf("Invalid command.\n");
-						print_usage(); //otherwise show correct command syntax
-					}
-				}
-				else if (!strcmp(command,"exit")){
-					cleanup_everything();
-					rc_set_state(EXITING);
-					return NULL;
-				}
-				else if (!strcmp(command,"help")){
-					print_usage();
-				}
-				else{
-					printf("Invalid command.\n");
-					print_usage();
-				}
-
-			}
-		}
-
-		//signal PWM duty to motor driver
-		//rc_set_motor(WS_MOTOR_CHANNEL, sys_state.WS_angle_setpoint);
-		//rc_set_motor(BL_MOTOR_CHANNEL_L, BL_MOTOR_POLARITY_L * sys_state.BL_duty_signal_left);
-		//rc_set_motor(BL_MOTOR_CHANNEL_R, BL_MOTOR_POLARITY_R * sys_state.BL_duty_signal_right);
-
-		//can use servo rails maybe
-		//need to map duty cycle to us pulse width (NOT MODULATED BY FREQ, different from PWM)
-		//rc_send_servo_pulse_us(WS_MOTOR_CHANNEL, int us)
-
-		//or gps headers as gpio
-		//create thread with freq of pwm? where toggles high/low
-		//rc_gpio_set_value(WS_MOTOR_CHANNEL, HIGH);
 
 		rc_usleep(1000000 / cfg_setting.READ_INPUT_HZ);
 	}
@@ -873,7 +548,6 @@ void* printf_loop(void* ptr){
 			//printf("  BL Duty L  |");
 			//printf("  BL Duty R  |");
 			printf("  Battery Voltage  |");
-			printf("  Armstate  |");
 			printf("\n");
 		}
 		else if(new_state==PAUSED && last_state!=PAUSED){
@@ -891,7 +565,6 @@ void* printf_loop(void* ptr){
 			//printf("%11.2f  |", sys_state.BL_duty_signal_left);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_right);
 			printf("%17.2f  |", sys_state.battery_voltage);
-			printf("%10.2d  |", controller_arming.armstate);
 			fflush(stdout);
 		}
 		rc_usleep(1000000 / cfg_setting.PRINTF_HZ);
@@ -912,53 +585,28 @@ int print_usage(){
 	printf("4) help - Displays list of commands.\n");
 	return 0;
 }
-
 /*******************************************************************************
-* void on_pause_pressed()
+* char *trimwhitespace(char *str)
 *
-* Quits if pause button is held. Mainly for debugging.
+* Removes leading and trailing whitespace from a string.
 *******************************************************************************/
-void on_pause_pressed(){
-	int i=0;
-	const int samples = 100;	// check for release 100 times in this period
-	const int us_wait = 1000000; // 1 second
-	// now keep checking to see if the button is still held down
-	for(i=0;i<samples;i++){
-		rc_usleep(us_wait/samples);
-		if(rc_get_pause_button() == RELEASED) return;
-	}
-	printf("Shutting down...\n");
-	rc_set_state(EXITING);
-	return;
-}
-
-/*******************************************************************************
-* void on_pause_released()
-*
-* Pauses if pause button is pressed. Mainly for debugging.
-*******************************************************************************/
-void on_pause_released(){
-	// toggle betewen paused and running modes
-	if(rc_get_state()==RUNNING)   		rc_set_state(PAUSED);
-	else if(rc_get_state()==PAUSED)	rc_set_state(RUNNING);
-	return;
-}
-
 char *trimwhitespace(char *str)
 {
   char *end;
-
-  // Trim leading space
-  while(isspace((unsigned char)*str)) str++;
-
-  if(*str == 0)  // All spaces?
+	/*remove leading whitespace*/
+  while(isspace((unsigned char)*str)){
+		str++;
+	 }
+	 /* check if it's all spaces*/
+	if(*str == 0){
     return str;
-
-  // Trim trailing space
+	}
+  /*remove trailing whitespace */
   end = str + strlen(str) - 1;
-  while(end > str && isspace((unsigned char)*end)) end--;
-
-  // Write new null terminator
+  while(end > str && isspace((unsigned char)*end)){
+		end--;
+	 }
+  /* add new null terminator */
   *(end+1) = 0;
 
   return str;
