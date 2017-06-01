@@ -169,6 +169,9 @@ int main(){
 	//start thread for reading user input
 	pthread_create(&read_input_thread, NULL, read_input, (void*) NULL);
 
+	/*start thread for motor output*/
+	pthread_create(&motor_thread, NULL, motor_output, (void*) NULL);
+
 	//set imu interrupt function
 	rc_set_imu_interrupt_func(&collect_data);
 
@@ -417,14 +420,10 @@ void* battery_checker(void* ptr){
 * Outputs PWM to motors based on number of PID control of PWM delay.
 *******************************************************************************/
 void* motor_output(void* ptr){
-		printf("controlling motors\n" );
-		int i;
-		//find error between current orientation and setpoint
-		controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
+		float WS_control_signal;
 
-		//PID control while error too big
-		while(abs(controller_state.error) > 0.5){
-
+		//PID control
+		while(rc_get_state()!=EXITING){
 			//set motor direction based on sign of error signal
 			if(controller_state.error<0){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
@@ -432,24 +431,25 @@ void* motor_output(void* ptr){
 			else{
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
 			}
-
-			//pulses to motor based on number of steps
-			for(i=0;i<controller_state.steps;i++){ //maybe need <=
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
+			/*checks if errors were neglibible so that it doesn't send constant high if there was zero delay*/
+				if(abs(controller_state.last_error) > 2.0  && abs(controller_state.error) > 2.0){
+					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
+				}
 				rc_usleep(150); //pulse width
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
-				rc_usleep(cfg_setting.PWM_DELAY); //wait between pulses
-			}
+
 			//PID
 			controller_state.last_error = controller_state.error;
 			controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
 			controller_state.derivative = controller_state.error - controller_state.last_error;
-			controller_state.integral = controller_state.integral + controller_state.error;
-			controller_state.steps = cfg_setting.STEPS_PER_WS_ANGLE_DEGREE*(cfg_setting.K_P*controller_state.error) + (cfg_setting.K_I*controller_state.integral) + (cfg_setting.K_D*controller_state.derivative);
+			WS_control_signal = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_D*controller_state.derivative);
 
+			if(abs(WS_control_signal) >= 0.5){
+				/*assuming inverse relationship btwn error and delay*/
+				cfg_setting.PWM_DELAY = 1000*cfg_setting.K_P*(1/round(abs(WS_control_signal)));
+				rc_usleep(cfg_setting.PWM_DELAY); //wait between pulses
+			}
 		}
-	printf("exiting motor output\n");
-	controller_state.steps = 0;
 	return NULL;
 }
 /*******************************************************************************
@@ -485,7 +485,6 @@ void* read_input(void* ptr){
 							print_usage(); //otherwise show correct command syntax
 						}
 					}
-
 					//if there isn't OPTION specified:
 					//start printf_thread if running from a terminal
 					//if it was started as a background process then don't bother
@@ -499,13 +498,14 @@ void* read_input(void* ptr){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
 						sys_state.WS_angle_setpoint = atoi(command_opt); //send angle to motor_output()
-						pthread_create(&motor_thread, NULL, motor_output, (void*) NULL); //drive motors
-						pthread_detach(motor_thread);
 					}
 					else{
 						printf("Invalid command.\n");
 						print_usage(); //otherwise show correct command syntax
 					}
+				}
+				else if (!strcmp(command,"swing")){
+
 				}
 				else if (!strcmp(command,"exit")){
 					cleanup_everything();
@@ -543,7 +543,7 @@ void* printf_loop(void* ptr){
 			printf("\nRUNNING\n");
 			printf("  Pitch  |");
 			printf("  Roll  |");
-			printf("  WS Steps  |");
+			printf("  WS Delay  |");
 			printf("  Error  |");
 			//printf("  BL Duty L  |");
 			//printf("  BL Duty R  |");
@@ -560,7 +560,7 @@ void* printf_loop(void* ptr){
 			printf("\r");
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%6.2f  |", sys_state.angle_about_y_axis);
-			printf("%10.2d  |", controller_state.steps);
+			printf("%10.2d  |", cfg_setting.PWM_DELAY);
 			printf("%7.2f  |", controller_state.error);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_left);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_right);
