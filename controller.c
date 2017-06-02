@@ -21,15 +21,16 @@ typedef struct cfg_settings_t{
 	// electrical hookups
 	int WS_MOTOR_CHANNEL;
 	int WS_MOTOR_DIR_PIN;
-	/*
+	int LIMIT_SWITCH_1;
+	int LIMIT_SWITCH_2;
+
 	int BL_MOTOR_CHANNEL_L;
 	int BL_MOTOR_DIR_PIN_L;
 	int BL_MOTOR_CHANNEL_R;
 	int BL_MOTOR_DIR_PIN_R;
 	int BL_MOTOR_POLARITY_L;
 	int BL_MOTOR_POLARITY_R;
-	*/
-
+	float BL_STEP_TO_DIST;
 	// Thread Loop Rates
 	int	BATTERY_CHECK_HZ;
 	int	PRINTF_HZ;
@@ -39,6 +40,9 @@ typedef struct cfg_settings_t{
 	float K_P;
 	float K_I;
 	float K_D;
+
+	float WINGOVER_ANGLES[10] = "";
+	float WINGOVER_TIMING[10] = "";
 
 } cfg_settings_t;
 
@@ -54,6 +58,8 @@ typedef struct controller_state_t{
 		float last_error;
 		float derivative;
 		float integral;
+		int wingover_flag;
+		int i;
 } controller_state_t;
 
 /*******************************************************************************
@@ -97,6 +103,8 @@ void* motor_output(void* ptr);
 int print_usage();
 int cleanup_everything();
 int get_config_settings();
+int setup_gpio_pins();
+int brakeline_control();
 char *trimwhitespace( char *str);
 
 /*******************************************************************************
@@ -137,17 +145,7 @@ int main(){
 	//get configuration settings
 	get_config_settings();
 
-	rc_set_pinmux_mode(cfg_setting.WS_MOTOR_CHANNEL, PINMUX_GPIO);
-	rc_gpio_export(cfg_setting.WS_MOTOR_CHANNEL);
-	rc_gpio_set_dir(cfg_setting.WS_MOTOR_CHANNEL, OUTPUT_PIN);
-	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
-
-
-	rc_set_pinmux_mode(cfg_setting.WS_MOTOR_DIR_PIN, PINMUX_GPIO);
-	rc_gpio_export(cfg_setting.WS_MOTOR_DIR_PIN);
-	rc_gpio_set_dir(cfg_setting.WS_MOTOR_DIR_PIN, OUTPUT_PIN);
-	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
-	/****************************************/
+	setup_gpio_pins();
 
 	// start a thread to slowly sample battery
 	pthread_create(&battery_thread, NULL, battery_checker, (void*) NULL);
@@ -194,157 +192,6 @@ int main(){
 
 
 /*******************************************************************************
-* int get_settings()
-*
-* Inputs config settings from config text file.
-*******************************************************************************/
-int get_config_settings(){
-	int cfg_value_int;
-	double cfg_value_float;
-	config_init(&cfg);
-	/* Read the file. If there is an error, report it and exit. */
- 	if(!config_read_file(&cfg, "paraglider_config.cfg"))
-  	{
-	    fprintf(stderr, "%s:%d - %s\n", config_error_file(&cfg),
-	    config_error_line(&cfg), config_error_text(&cfg));
-	    config_destroy(&cfg);
-	    return(EXIT_FAILURE);
-	}
-
-	if(config_lookup_int(&cfg, "SAMPLE_RATE_HZ", &cfg_value_int)){
-    	cfg_setting.SAMPLE_RATE_HZ = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'SAMPLE_RATE_HZ' setting in configuration file.\n");
-  	}
-  	if(config_lookup_int(&cfg, "STEPS_PER_WS_ANGLE_DEGREE", &cfg_value_int)){
-    	cfg_setting.STEPS_PER_WS_ANGLE_DEGREE = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'STEPS_PER_WS_ANGLE_DEGREE' setting in configuration file.\n");
-  	}
-  	if(config_lookup_float(&cfg, "CAPE_MOUNT_ANGLE_X", &cfg_value_float)){
-    	cfg_setting.CAPE_MOUNT_ANGLE_X = cfg_value_float;
-	}
-  	else{
-		fprintf(stderr, "No 'CAPE_MOUNT_ANGLE_X' setting in configuration file.\n");
-  	}
-  	if(config_lookup_float(&cfg, "CAPE_MOUNT_ANGLE_Y", &cfg_value_float)){
-    	cfg_setting.CAPE_MOUNT_ANGLE_Y = cfg_value_float;
-	}
-  	else{
-		fprintf(stderr, "No 'CAPE_MOUNT_ANGLE_Y' setting in configuration file.\n");
-  	}
-  	if(config_lookup_float(&cfg, "CAPE_MOUNT_ANGLE_Z", &cfg_value_float)){
-    	cfg_setting.CAPE_MOUNT_ANGLE_Z = cfg_value_float;
-	}
-  	else{
-		fprintf(stderr, "No 'CAPE_MOUNT_ANGLE_Z' setting in configuration file.\n");
-  	}
-  	if(config_lookup_float(&cfg, "V_NOMINAL", &cfg_value_float)){
-    	cfg_setting.V_NOMINAL = cfg_value_float;
-	}
-  	else{
-		fprintf(stderr, "No 'V_NOMINAL' setting in configuration file.\n");
-  	}
-  	if(config_lookup_int(&cfg, "WS_MOTOR_CHANNEL", &cfg_value_int)){
-    	cfg_setting.WS_MOTOR_CHANNEL = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'WS_MOTOR_CHANNEL' setting in configuration file.\n");
-  	}
-  	if(config_lookup_int(&cfg, "WS_MOTOR_DIR_PIN", &cfg_value_int)){
-    	cfg_setting.WS_MOTOR_DIR_PIN = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'WS_MOTOR_DIR_PIN' setting in configuration file.\n");
-  	}
-		if(config_lookup_int(&cfg, "PWM_DELAY", &cfg_value_int)){
-    	cfg_setting.PWM_DELAY = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'PWM_DELAY' setting in configuration file.\n");
-  	}
-  	/*
-  	if(config_lookup_int(&cfg, "BL_MOTOR_CHANNEL_L", &cfg_value_int)){
-    	cfg_setting.BL_MOTOR_CHANNEL_L = cfg_value_int;
-	}
-	else{
-		fprintf(stderr, "No 'BL_MOTOR_CHANNEL_L' setting in configuration file.\n");
-  	}
-  	if(config_lookup_int(&cfg, "BL_MOTOR_DIR_PIN_L", &cfg_value_int)){
-    	cfg_setting.BL_MOTOR_DIR_PIN_L = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'BL_MOTOR_DIR_PIN_L' setting in configuration file.\n");
-  	}
-  	if(config_lookup_int(&cfg, "BL_MOTOR_CHANNEL_R", &cfg_value_int)){
-    	cfg_setting.BL_MOTOR_CHANNEL_R = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'BL_MOTOR_CHANNEL_R' setting in configuration file.\n");
-  	}
-  	if(config_lookup_int(&cfg, "BL_MOTOR_DIR_PIN_R", &cfg_value_int)){
-    	cfg_setting.BL_MOTOR_DIR_PIN_R = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'BL_MOTOR_DIR_PIN_R' setting in configuration file.\n");
-  	}
-  	if(config_lookup_int(&cfg, "BL_MOTOR_POLARITY_L", &cfg_value_int)){
-    	cfg_setting.BL_MOTOR_POLARITY_L = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'BL_MOTOR_POLARITY_L' setting in configuration file.\n");
-  	}
-  	if(config_lookup_int(&cfg, "BL_MOTOR_POLARITY_R", &cfg_value_int)){
-    	cfg_setting.BL_MOTOR_POLARITY_R = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'BL_MOTOR_POLARITY_R' setting in configuration file.\n");
-  	}
-  	*/
-  	if(config_lookup_int(&cfg, "BATTERY_CHECK_HZ", &cfg_value_int)){
-    	cfg_setting.BATTERY_CHECK_HZ = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'BATTERY_CHECK_HZ' setting in configuration file.\n");
-  	}
-  	if(config_lookup_int(&cfg, "PRINTF_HZ", &cfg_value_int)){
-    	cfg_setting.PRINTF_HZ = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'PRINTF_HZ' setting in configuration file.\n");
-  	}
-  	if(config_lookup_int(&cfg, "READ_INPUT_HZ", &cfg_value_int)){
-    	cfg_setting.READ_INPUT_HZ = cfg_value_int;
-	}
-  	else{
-		fprintf(stderr, "No 'READ_INPUT_HZ' setting in configuration file.\n");
-  	}
-  	if(config_lookup_float(&cfg, "K_P", &cfg_value_float)){
-    	cfg_setting.K_P = cfg_value_float;
-	}
-  	else{
-		fprintf(stderr, "No 'K_P' setting in configuration file.\n");
-  	}
-  	if(config_lookup_float(&cfg, "K_I", &cfg_value_float)){
-    	cfg_setting.K_I = cfg_value_float;
-	}
-  	else{
-		fprintf(stderr, "No 'K_I' setting in configuration file.\n");
-  	}
-  	if(config_lookup_float(&cfg, "K_D", &cfg_value_float)){
-    	cfg_setting.K_D = cfg_value_float;
-	}
-  	else{
-		fprintf(stderr, "No 'K_D' setting in configuration file.\n");
-  	}
-
-	return 0;
-}
-
-
-/*******************************************************************************
 * int cleanup_everything()
 *
 * Frees up memory and powers off imu to prepare for shutdown.
@@ -354,8 +201,16 @@ int cleanup_everything(){
 	//rc_set_cpu_freq(FREQ_ONDEMAND);
 	pthread_cancel(battery_thread);
 	pthread_cancel(printf_thread);
+
 	rc_gpio_unexport(cfg_setting.WS_MOTOR_CHANNEL);
 	rc_gpio_unexport(cfg_setting.WS_MOTOR_DIR_PIN);
+	rc_gpio_unexport(cfg_setting.BL_MOTOR_CHANNEL_L);
+	rc_gpio_unexport(cfg_setting.BL_MOTOR_CHANNEL_R);
+	rc_gpio_unexport(cfg_setting.BL_MOTOR_DIR_PIN_L);
+	rc_gpio_unexport(cfg_setting.BL_MOTOR_DIR_PIN_R);
+	rc_gpio_unexport(cfg_setting.LIMIT_SWITCH_1_PIN);
+	rc_gpio_unexport(cfg_setting.LIMIT_SWITCH_2_PIN);
+
 	config_destroy(&cfg);
 	rc_cleanup();
 	return 0;
@@ -424,6 +279,12 @@ void* motor_output(void* ptr){
 
 		//PID control
 		while(rc_get_state()!=EXITING){
+
+			if(controller_state.wingover_flag == 1){
+				if(cfg_setting.WINGOVER_ANGLES[controller_state.i] != NULL)
+				sys_state.WS_angle_setpoint = cfg_setting.WINGOVER_ANGLES[controller_state.i];
+				controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
+			}
 			//set motor direction based on sign of error signal
 			if(controller_state.error<0){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
@@ -432,15 +293,26 @@ void* motor_output(void* ptr){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
 			}
 			/*checks if errors were neglibible so that it doesn't send constant high if there was zero delay*/
-				if(abs(controller_state.last_error) > 2.0  && abs(controller_state.error) > 2.0){
+			/*also checks if limit switches were hit so it doesn't rip itself apart trying to get to the setpoint*/
+				if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) != HIGH && rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN) != HIGH  && abs(controller_state.last_error) > 2.0  && abs(controller_state.error) > 2.0){
 					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
+				}
+				else if (controller_state.wingover_flag == 1 && abs(controller_state.last_error) <= 2.0  && abs(controller_state.error) <= 2.0){
+					rc_usleep(cfg_setting.WINGOVER_TIMING[i]);
+					if(controller_state.i < (sizeof(cfg_setting.WINGOVER_ANGLES)/sizeof(cfg_setting.WINGOVER_ANGLES[0]))-1){
+						controller_state.i++;
+					}
+					else{
+						controller_state.wingover_flag = 0;
+						sys_state.WS_angle_setpoint = 0.0;
+					}
 				}
 				rc_usleep(150); //pulse width
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
 
 			//PID
 			controller_state.last_error = controller_state.error;
-			controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_y_axis;
+			controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
 			controller_state.derivative = controller_state.error - controller_state.last_error;
 			WS_control_signal = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_D*controller_state.derivative);
 
@@ -449,8 +321,49 @@ void* motor_output(void* ptr){
 				cfg_setting.PWM_DELAY = 1000*cfg_setting.K_P*(1/round(abs(WS_control_signal)));
 				rc_usleep(cfg_setting.PWM_DELAY); //wait between pulses
 			}
+
 		}
 	return NULL;
+}
+/*******************************************************************************
+* int brakeline_control(float dist, int pul_pin[], int dir_pin[])
+*
+* Pulls/releases brake lines based on user inputted line travel distance.
+*******************************************************************************/
+int brakeline_control(float dist[], int pul_pin[], int dir_pin[]){
+	int i;
+	float bl_dist;
+	/*set direction for each motor depending on its polarity (based on orientation)*/
+	if(dist[0] >= 0){
+		rc_gpio_set_value_mmap(dir_pin[0],HIGH);
+	}
+	else if(dist[0] < 0){
+		rc_gpio_set_value_mmap(dir_pin[0],LOW);
+	}
+
+	if(dist[1] >= 0){
+		rc_gpio_set_value_mmap(dir_pin[1],HIGH);
+	}
+	else if(dist[1] < 0){
+		rc_gpio_set_value_mmap(dir_pin[1],LOW);
+	}
+
+	/*make motors move distance*/
+	if(dist[0]!=NULL){
+		bl_dist = abs(dist[0]);
+	}
+	else if (dist[1]!=NULL){
+		bl_dist = abs(dist[1]);
+	}
+	for(i=0;i*cfg_setting.BL_STEP_TO_DIST<bl_dist;i++){
+		rc_gpio_set_value_mmap(pul_pin[0],HIGH); //pulse on left motor
+		rc_gpio_set_value_mmap(pul_pin[1],HIGH); //pulse on right motor
+		rc_usleep(50); //pulse width
+		rc_gpio_set_value_mmap(pul_pin[0],LOW); //pulse off left motor
+		rc_gpio_set_value_mmap(pul_pin[1],HIGH); //pulse off right motor
+		rc_usleep(100);
+	}
+	return 0;
 }
 /*******************************************************************************
 * void* read_input(void* ptr)
@@ -504,8 +417,48 @@ void* read_input(void* ptr){
 						print_usage(); //otherwise show correct command syntax
 					}
 				}
-				else if (!strcmp(command,"swing")){
-
+				else if (!strcmp(command,"wingover")){
+					controller_state.wingover_flag = 1;
+					controller_state.i = 0;
+				}
+				else if (!strcmp(command,"brakel")){
+					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
+					if(command_opt != NULL){ //if there is an arguement passed
+						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, NULL}
+						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, NULL}; //set up pulse pin arguement
+						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, NULL}; //set up dir pin arguement
+						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
+					}
+					else{
+						printf("Invalid command.\n");
+						print_usage(); //otherwise show correct command syntax
+					}
+				}
+				else if (!strcmp(command,"braker")){
+					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
+					if(command_opt != NULL){ //if there is an arguement passed
+						float bl_arg_dist[2] = {NULL, atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R}
+						int bl_arg_pul[2] = {NULL, cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin arguement
+						int bl_arg_dir[2] = {NULL, cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin arguement
+						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
+					}
+					else{
+						printf("Invalid command.\n");
+						print_usage(); //otherwise show correct command syntax
+					}
+				}
+				else if (!strcmp(command,"brakes")){
+					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
+					if(command_opt != NULL){ //if there is an arguement passed
+						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R};
+						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin arguement
+						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin arguement
+						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
+					}
+					else{
+						printf("Invalid command.\n");
+						print_usage(); //otherwise show correct command syntax
+					}
 				}
 				else if (!strcmp(command,"exit")){
 					cleanup_everything();
@@ -558,8 +511,8 @@ void* printf_loop(void* ptr){
 		// decide what to print or exit
 		if(new_state == RUNNING){
 			printf("\r");
-			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%6.2f  |", sys_state.angle_about_y_axis);
+			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%10.2d  |", cfg_setting.PWM_DELAY);
 			printf("%7.2f  |", controller_state.error);
 			//printf("%11.2f  |", sys_state.BL_duty_signal_left);
@@ -575,16 +528,287 @@ void* printf_loop(void* ptr){
 /*******************************************************************************
 * int print_usage()
 *
-* Prints default arguments to controller
+* Prints default arguments to controller.
 *******************************************************************************/
 int print_usage(){
 	printf("\nCommand List: \n");
 	printf("1) display - Displays orientation data. 'display exit' stops display output.\n");
-	printf("2) drive ## - Sets desired angle of ## and sends to weight shift motor. \n");
-	printf("3) exit - Quit control software.\n");
-	printf("4) help - Displays list of commands.\n");
+	printf("2) drive # - Sets desired angle of # and sends to weight shift motor. \n");
+	printf("3) brakel # - Pulls left brake line down # centimeters.\n");
+	printf("4) braker # - Pulls right brake line down # centimeters.\n");
+	printf("5) brakes # - Pulls both brake lines down # centimeters.\n");
+	printf("6) wingover - Performs the wingover maneuver.\n");
+	printf("7) exit - Quit control software.\n");
+	printf("8) help - Displays list of commands.\n");
 	return 0;
 }
+
+/*******************************************************************************
+* int setup_gpio_pins()
+*
+* Initializes gpio pins for reading/writing.
+*******************************************************************************/
+int setup_gpio_pins(){
+
+	/*Weight-shift motor pulse pin*/
+	rc_set_pinmux_mode(cfg_setting.WS_MOTOR_CHANNEL, PINMUX_GPIO);
+	rc_gpio_export(cfg_setting.WS_MOTOR_CHANNEL);
+	rc_gpio_set_dir(cfg_setting.WS_MOTOR_CHANNEL, OUTPUT_PIN);
+	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
+
+	/*Weight-shift motor direction pin*/
+	rc_set_pinmux_mode(cfg_setting.WS_MOTOR_DIR_PIN, PINMUX_GPIO);
+	rc_gpio_export(cfg_setting.WS_MOTOR_DIR_PIN);
+	rc_gpio_set_dir(cfg_setting.WS_MOTOR_DIR_PIN, OUTPUT_PIN);
+	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
+
+	/*Left Brake Line motor pulse pin*/
+	rc_set_pinmux_mode(cfg_setting.BL_MOTOR_CHANNEL_L, PINMUX_GPIO);
+	rc_gpio_export(cfg_setting.BL_MOTOR_CHANNEL_L);
+	rc_gpio_set_dir(cfg_setting.BL_MOTOR_CHANNEL_L, OUTPUT_PIN);
+	rc_gpio_set_value_mmap(cfg_setting.BL_MOTOR_CHANNEL_L,LOW);
+
+	/*Left Brake Line motor direction pin*/
+	rc_set_pinmux_mode(cfg_setting.BL_MOTOR_DIR_PIN_L, PINMUX_GPIO);
+	rc_gpio_export(cfg_setting.BL_MOTOR_DIR_PIN_L);
+	rc_gpio_set_dir(cfg_setting.BL_MOTOR_DIR_PIN_L, OUTPUT_PIN);
+	rc_gpio_set_value_mmap(cfg_setting.BL_MOTOR_DIR_PIN_L,LOW);
+
+	/*Right Brake Line motor pulse pin*/
+	rc_set_pinmux_mode(cfg_setting.BL_MOTOR_CHANNEL_R, PINMUX_GPIO);
+	rc_gpio_export(cfg_setting.BL_MOTOR_CHANNEL_R);
+	rc_gpio_set_dir(cfg_setting.BL_MOTOR_CHANNEL_R, OUTPUT_PIN);
+	rc_gpio_set_value_mmap(cfg_setting.BL_MOTOR_CHANNEL_R,LOW);
+
+	/*Right Brake Line motor direction pin*/
+	rc_set_pinmux_mode(cfg_setting.BL_MOTOR_DIR_PIN_R, PINMUX_GPIO);
+	rc_gpio_export(cfg_setting.BL_MOTOR_DIR_PIN_R);
+	rc_gpio_set_dir(cfg_setting.BL_MOTOR_DIR_PIN_R, OUTPUT_PIN);
+	rc_gpio_set_value_mmap(cfg_setting.BL_MOTOR_DIR_PIN_R,LOW);
+
+	/*Limit switch 1 pin*/
+	rc_set_pinmux_mode(cfg_setting.LIMIT_SWITCH_1_PIN, PINMUX_GPIO);
+	rc_gpio_export(cfg_setting.LIMIT_SWITCH_1_PIN);
+	rc_gpio_set_dir(cfg_setting.LIMIT_SWITCH_1_PIN, INPUT_PIN);
+	rc_gpio_set_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN,LOW);
+
+	/*Limit switch 2 pin*/
+	rc_set_pinmux_mode(cfg_setting.LIMIT_SWITCH_2_PIN, PINMUX_GPIO);
+	rc_gpio_export(cfg_setting.LIMIT_SWITCH_2_PIN);
+	rc_gpio_set_dir(cfg_setting.LIMIT_SWITCH_2_PIN, INPUT_PIN);
+	rc_gpio_set_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN,LOW);
+
+	return 0;
+}
+
+/*******************************************************************************
+* int get_settings()
+*
+* Inputs config settings from config text file.
+*******************************************************************************/
+int get_config_settings(){
+	int cfg_value_int;
+	double cfg_value_float;
+	config_init(&cfg);
+	/* Read the file. If there is an error, report it and exit. */
+ 	if(!config_read_file(&cfg, "paraglider_config.cfg")){
+    fprintf(stderr, "%s:%d - %s\n", config_error_file(&cfg),
+    config_error_line(&cfg), config_error_text(&cfg));
+    config_destroy(&cfg);
+    return(EXIT_FAILURE);
+	}
+
+	if(config_lookup_int(&cfg, "SAMPLE_RATE_HZ", &cfg_value_int)){
+  	cfg_setting.SAMPLE_RATE_HZ = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'SAMPLE_RATE_HZ' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "STEPS_PER_WS_ANGLE_DEGREE", &cfg_value_int)){
+  	cfg_setting.STEPS_PER_WS_ANGLE_DEGREE = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'STEPS_PER_WS_ANGLE_DEGREE' setting in configuration file.\n");
+	}
+
+	if(config_lookup_float(&cfg, "CAPE_MOUNT_ANGLE_X", &cfg_value_float)){
+  	cfg_setting.CAPE_MOUNT_ANGLE_X = cfg_value_float;
+	}
+	else{
+	fprintf(stderr, "No 'CAPE_MOUNT_ANGLE_X' setting in configuration file.\n");
+	}
+
+	if(config_lookup_float(&cfg, "CAPE_MOUNT_ANGLE_Y", &cfg_value_float)){
+  	cfg_setting.CAPE_MOUNT_ANGLE_Y = cfg_value_float;
+	}
+	else{
+	fprintf(stderr, "No 'CAPE_MOUNT_ANGLE_Y' setting in configuration file.\n");
+	}
+
+	if(config_lookup_float(&cfg, "CAPE_MOUNT_ANGLE_Z", &cfg_value_float)){
+  	cfg_setting.CAPE_MOUNT_ANGLE_Z = cfg_value_float;
+	}
+	else{
+	fprintf(stderr, "No 'CAPE_MOUNT_ANGLE_Z' setting in configuration file.\n");
+	}
+
+	if(config_lookup_float(&cfg, "V_NOMINAL", &cfg_value_float)){
+  	cfg_setting.V_NOMINAL = cfg_value_float;
+	}
+	else{
+	fprintf(stderr, "No 'V_NOMINAL' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "PWM_DELAY", &cfg_value_int)){
+		cfg_setting.PWM_DELAY = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'PWM_DELAY' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "WS_MOTOR_CHANNEL", &cfg_value_int)){
+  	cfg_setting.WS_MOTOR_CHANNEL = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'WS_MOTOR_CHANNEL' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "WS_MOTOR_DIR_PIN", &cfg_value_int)){
+  	cfg_setting.WS_MOTOR_DIR_PIN = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'WS_MOTOR_DIR_PIN' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "LIMIT_SWITCH_1", &cfg_value_int)){
+		cfg_setting.LIMIT_SWITCH_1 = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'LIMIT_SWITCH_1' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "LIMIT_SWITCH_2", &cfg_value_int)){
+		cfg_setting.LIMIT_SWITCH_2 = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'LIMIT_SWITCH_2' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "BL_MOTOR_CHANNEL_L", &cfg_value_int)){
+  	cfg_setting.BL_MOTOR_CHANNEL_L = cfg_value_int;
+	}
+	else{
+		fprintf(stderr, "No 'BL_MOTOR_CHANNEL_L' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "BL_MOTOR_DIR_PIN_L", &cfg_value_int)){
+  	cfg_setting.BL_MOTOR_DIR_PIN_L = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'BL_MOTOR_DIR_PIN_L' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "BL_MOTOR_CHANNEL_R", &cfg_value_int)){
+  	cfg_setting.BL_MOTOR_CHANNEL_R = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'BL_MOTOR_CHANNEL_R' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "BL_MOTOR_DIR_PIN_R", &cfg_value_int)){
+  	cfg_setting.BL_MOTOR_DIR_PIN_R = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'BL_MOTOR_DIR_PIN_R' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "BL_MOTOR_POLARITY_L", &cfg_value_int)){
+  	cfg_setting.BL_MOTOR_POLARITY_L = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'BL_MOTOR_POLARITY_L' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "BL_MOTOR_POLARITY_R", &cfg_value_int)){
+  	cfg_setting.BL_MOTOR_POLARITY_R = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'BL_MOTOR_POLARITY_R' setting in configuration file.\n");
+	}
+
+	if(config_lookup_float(&cfg, "BL_STEP_TO_DIST", &cfg_value_float)){
+  	cfg_setting.BL_STEP_TO_DIST = cfg_value_float;
+	}
+	else{
+	fprintf(stderr, "No 'BL_STEP_TO_DIST' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "BATTERY_CHECK_HZ", &cfg_value_int)){
+  	cfg_setting.BATTERY_CHECK_HZ = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'BATTERY_CHECK_HZ' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "PRINTF_HZ", &cfg_value_int)){
+  	cfg_setting.PRINTF_HZ = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'PRINTF_HZ' setting in configuration file.\n");
+	}
+
+	if(config_lookup_int(&cfg, "READ_INPUT_HZ", &cfg_value_int)){
+  	cfg_setting.READ_INPUT_HZ = cfg_value_int;
+	}
+	else{
+	fprintf(stderr, "No 'READ_INPUT_HZ' setting in configuration file.\n");
+	}
+
+	if(config_lookup_float(&cfg, "K_P", &cfg_value_float)){
+  	cfg_setting.K_P = cfg_value_float;
+	}
+	else{
+	fprintf(stderr, "No 'K_P' setting in configuration file.\n");
+	}
+
+	if(config_lookup_float(&cfg, "K_I", &cfg_value_float)){
+  	cfg_setting.K_I = cfg_value_float;
+	}
+	else{
+	fprintf(stderr, "No 'K_I' setting in configuration file.\n");
+	}
+
+	if(config_lookup_float(&cfg, "K_D", &cfg_value_float)){
+  	cfg_setting.K_D = cfg_value_float;
+	}
+	else{
+	fprintf(stderr, "No 'K_D' setting in configuration file.\n");
+	}
+	int j;
+	config_setting_t *setting1, *setting2;
+	setting1 = config_lookup(&cfg,"WINGOVER_ANGLES");
+	if(setting1 != NULL){
+		for(j=0;j<config_setting_length(setting1);j++){
+			cfg_setting.WINGOVER_ANGLES[j] = config_setting_get_float_elem(setting1,j);
+		}
+	}
+	else{
+		fprintf(stderr, "No 'WINGOVER_ANGLES' setting in configuration file."\n);
+	}
+
+	setting2 = config_lookup(&cfg,"WINGOVER_TIMING");
+	if(setting2 != NULL){
+		for(j=0;j<config_setting_length(setting2);j++){
+			cfg_setting.WINGOVER_ANGLES[j] = config_setting_get_float_elem(setting2,j);
+		}
+	}
+	else{
+		fprintf(stderr, "No 'WINGOVER_TIMING' setting in configuration file."\n);
+	}
+	return 0;
+}
+
 /*******************************************************************************
 * char *trimwhitespace(char *str)
 *
