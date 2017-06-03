@@ -43,8 +43,8 @@ typedef struct cfg_settings_t{
 	int LIMIT_SWITCH_1_PIN;
 	int LIMIT_SWITCH_2_PIN;
 
-	float WINGOVER_ANGLES[10];
-	float WINGOVER_TIMING[10];
+	int WINGOVER_ANGLES[10];
+	int WINGOVER_TIMING[10];
 
 } cfg_settings_t;
 
@@ -282,8 +282,7 @@ void* motor_output(void* ptr){
 		//PID control
 		while(rc_get_state()!=EXITING){
 
-			if(controller_state.wingover_flag == 1){
-				if(cfg_setting.WINGOVER_ANGLES[controller_state.i] != '\0')
+			if(controller_state.wingover_flag == 1 && cfg_setting.WINGOVER_ANGLES[controller_state.i] != '\0'){
 				sys_state.WS_angle_setpoint = cfg_setting.WINGOVER_ANGLES[controller_state.i];
 				controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
 			}
@@ -792,7 +791,7 @@ int get_config_settings(){
 	setting1 = config_lookup(&cfg,"WINGOVER_ANGLES");
 	if(setting1 != NULL){
 		for(j=0;j<config_setting_length(setting1);j++){
-			cfg_setting.WINGOVER_ANGLES[j] = config_setting_get_float_elem(setting1,j);
+			cfg_setting.WINGOVER_ANGLES[j] = config_setting_get_int_elem(setting1,j);
 		}
 	}
 	else{
@@ -802,7 +801,7 @@ int get_config_settings(){
 	setting2 = config_lookup(&cfg,"WINGOVER_TIMING");
 	if(setting2 != NULL){
 		for(j=0;j<config_setting_length(setting2);j++){
-			cfg_setting.WINGOVER_ANGLES[j] = config_setting_get_float_elem(setting2,j);
+			cfg_setting.WINGOVER_TIMING[j] = config_setting_get_int_elem(setting2,j);
 		}
 	}
 	else{
