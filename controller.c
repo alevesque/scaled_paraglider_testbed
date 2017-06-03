@@ -453,6 +453,9 @@ void* read_input(void* ptr){
 						print_usage(); //otherwise show correct command syntax
 					}
 				}
+				else if (!strcmp(command,"swing")){
+
+				}
 				else if (!strcmp(command,"exit")){
 					cleanup_everything();
 					rc_set_state(EXITING);
