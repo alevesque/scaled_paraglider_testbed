@@ -21,8 +21,6 @@ typedef struct cfg_settings_t{
 	// electrical hookups
 	int WS_MOTOR_CHANNEL;
 	int WS_MOTOR_DIR_PIN;
-	int LIMIT_SWITCH_1;
-	int LIMIT_SWITCH_2;
 
 	int BL_MOTOR_CHANNEL_L;
 	int BL_MOTOR_DIR_PIN_L;
@@ -40,6 +38,9 @@ typedef struct cfg_settings_t{
 	float K_P;
 	float K_I;
 	float K_D;
+
+	int LIMIT_SWITCH_1_PIN;
+	int LIMIT_SWITCH_2_PIN;
 
 } cfg_settings_t;
 
@@ -327,10 +328,10 @@ int brakeline_control(float dist[], int pul_pin[], int dir_pin[]){
 	}
 
 	/*make motors move distance*/
-	if(dist[0]!=NULL){
+	if(dist[0]){
 		bl_dist = abs(dist[0]);
 	}
-	else if (dist[1]!=NULL){
+	else if (dist[1]){
 		bl_dist = abs(dist[1]);
 	}
 	for(i=0;i*cfg_setting.BL_STEP_TO_DIST<bl_dist;i++){
@@ -401,9 +402,9 @@ void* read_input(void* ptr){
 				else if (!strcmp(command,"brakel")){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
-						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, NULL}
-						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, NULL}; //set up pulse pin arguement
-						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, NULL}; //set up dir pin arguement
+						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, '\0'};
+						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, '\0'}; //set up pulse pin arguement
+						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, '\0'}; //set up dir pin arguement
 						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
 					}
 					else{
@@ -414,9 +415,9 @@ void* read_input(void* ptr){
 				else if (!strcmp(command,"braker")){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
-						float bl_arg_dist[2] = {NULL, atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R}
-						int bl_arg_pul[2] = {NULL, cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin arguement
-						int bl_arg_dir[2] = {NULL, cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin arguement
+						float bl_arg_dist[2] = {'\0', atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R};
+						int bl_arg_pul[2] = {'\0', cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin arguement
+						int bl_arg_dir[2] = {'\0', cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin arguement
 						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
 					}
 					else{
@@ -475,8 +476,8 @@ void* printf_loop(void* ptr){
 			printf("  Roll  |");
 			printf("  WS Delay  |");
 			printf("  Error  |");
-			//printf("  BL Duty L  |");
-			//printf("  BL Duty R  |");
+			printf(" 	LS L  |");
+			printf("  LS R  |");
 			printf("  Battery Voltage  |");
 			printf("\n");
 		}
@@ -492,8 +493,8 @@ void* printf_loop(void* ptr){
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%10.2d  |", cfg_setting.PWM_DELAY);
 			printf("%7.2f  |", controller_state.error);
-			//printf("%11.2f  |", sys_state.BL_duty_signal_left);
-			//printf("%11.2f  |", sys_state.BL_duty_signal_right);
+			printf("%6.2f  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN));
+			printf("%6.2f  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN));
 			printf("%17.2f  |", sys_state.battery_voltage);
 			fflush(stdout);
 		}
@@ -658,18 +659,18 @@ int get_config_settings(){
 	fprintf(stderr, "No 'WS_MOTOR_DIR_PIN' setting in configuration file.\n");
 	}
 
-	if(config_lookup_int(&cfg, "LIMIT_SWITCH_1", &cfg_value_int)){
-		cfg_setting.LIMIT_SWITCH_1 = cfg_value_int;
+	if(config_lookup_int(&cfg, "LIMIT_SWITCH_1_PIN", &cfg_value_int)){
+		cfg_setting.LIMIT_SWITCH_1_PIN = cfg_value_int;
 	}
 	else{
-	fprintf(stderr, "No 'LIMIT_SWITCH_1' setting in configuration file.\n");
+	fprintf(stderr, "No 'LIMIT_SWITCH_1_PIN' setting in configuration file.\n");
 	}
 
-	if(config_lookup_int(&cfg, "LIMIT_SWITCH_2", &cfg_value_int)){
-		cfg_setting.LIMIT_SWITCH_2 = cfg_value_int;
+	if(config_lookup_int(&cfg, "LIMIT_SWITCH_2_PIN", &cfg_value_int)){
+		cfg_setting.LIMIT_SWITCH_2_PIN = cfg_value_int;
 	}
 	else{
-	fprintf(stderr, "No 'LIMIT_SWITCH_2' setting in configuration file.\n");
+	fprintf(stderr, "No 'LIMIT_SWITCH_2_PIN' setting in configuration file.\n");
 	}
 
 	if(config_lookup_int(&cfg, "BL_MOTOR_CHANNEL_L", &cfg_value_int)){
