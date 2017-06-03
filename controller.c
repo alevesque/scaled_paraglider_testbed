@@ -508,8 +508,8 @@ void* printf_loop(void* ptr){
 			printf("%7.2f  |", sys_state.angle_about_x_axis);
 			printf("%10.2d  |", cfg_setting.PWM_DELAY);
 			printf("%7.2f  |", controller_state.error);
-			printf("%6.2f  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN));
-			printf("%6.2f  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN));
+			printf("%5.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN));
+			printf("%5.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN));
 			printf("%17.2f  |", sys_state.battery_voltage);
 			fflush(stdout);
 		}
