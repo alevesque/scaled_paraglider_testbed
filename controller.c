@@ -389,7 +389,22 @@ void* read_input(void* ptr){
 				else if(!strcmp(command,"drive")){ //if COMMAND is 'drive'
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
-						sys_state.WS_angle_setpoint = atoi(command_opt); //send angle to motor_output()
+						sys_state.WS_angle_setpoint = atoi(command_opt); //send argument as angle to motor_output()
+
+						/*if either limit switch is triggered, switch direction and step off the trigger so that the motor won't be prevented from moving due to triggered limit switch*/
+						if(cfg_setting.LIMIT_SWITCH_1_PIN) == HIGH || rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN) == HIGH){
+							rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,-1*rc_gpio_get_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN));
+							int count;
+							for(count=0;count<29;count++){
+								/*Number of steps (count) determined by: distance needed to untrigger switch divided by timing belt pulley radius to find angle of arc in rad
+								then convert rad into degrees, and divide by number of degrees per step (given in motor spec) to find steps. in this case switch protrudes 0.9" and pulley is 1" rad so
+								arc is 0.9 rad =  51.6 deg. With 1.8deg per step, get 28.66 steps needed to release switch.*/
+								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH);
+								rc_usleep(100); /* want it done quickly*/
+								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
+								rc_usleep(150); /*short delay so releasing switch doesnt interfere with control responsiveness*/
+							}
+						}
 					}
 					else{
 						printf("Invalid command.\n");
