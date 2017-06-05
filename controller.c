@@ -249,23 +249,6 @@ void collect_data(){
 }
 
 /*******************************************************************************
-* void* battery_checker(void* ptr)
-*
-* Checks battery voltage to ensure it's normal.
-*******************************************************************************/
-void* battery_checker(void* ptr){
-		float new_v;
-		while(rc_get_state()!=EXITING){
-			new_v = rc_battery_voltage();
-			// if the value doesn't make sense, use nominal voltage
-			if (new_v>9.0 || new_v<5.0) new_v = cfg_setting.V_NOMINAL;
-			sys_state.battery_voltage = new_v;
-			rc_usleep(1000000 / cfg_setting.BATTERY_CHECK_HZ);
-		}
-		return NULL;
-	}
-
-/*******************************************************************************
 * void* motor_output(void* ptr)
 *
 * Outputs PWM to motors based on number of PID control of PWM delay.
@@ -312,6 +295,8 @@ void* motor_output(void* ptr){
 int brakeline_control(float dist[], int pul_pin[], int dir_pin[]){
 	int i;
 	float bl_dist;
+	printf("%f\n",dist[0] );
+	printf("%f\n",dist[1] );
 	/*set direction for each motor depending on its polarity (based on orientation)*/
 	if(dist[0] >= 0){
 		rc_gpio_set_value_mmap(dir_pin[0],HIGH);
@@ -328,19 +313,23 @@ int brakeline_control(float dist[], int pul_pin[], int dir_pin[]){
 	}
 
 	/*make motors move distance*/
-	if(dist[0]){
+	if(dist[0]!='\0'){
 		bl_dist = abs(dist[0]);
 	}
-	else if (dist[1]){
+	else if (dist[1]!='\0'){
 		bl_dist = abs(dist[1]);
 	}
+	printf("%f\n",bl_dist );
+	printf("%d\n", pul_pin[0]);
+	printf("%d\n", pul_pin[1]);
 	for(i=0;i*cfg_setting.BL_STEP_TO_DIST<bl_dist;i++){
+
 		rc_gpio_set_value_mmap(pul_pin[0],HIGH); //pulse on left motor
 		rc_gpio_set_value_mmap(pul_pin[1],HIGH); //pulse on right motor
-		rc_usleep(50); //pulse width
+		rc_usleep(300); //pulse width
 		rc_gpio_set_value_mmap(pul_pin[0],LOW); //pulse off left motor
-		rc_gpio_set_value_mmap(pul_pin[1],HIGH); //pulse off right motor
-		rc_usleep(100);
+		rc_gpio_set_value_mmap(pul_pin[1],LOW); //pulse off right motor
+		rc_usleep(500);
 	}
 	return 0;
 }
@@ -389,22 +378,21 @@ void* read_input(void* ptr){
 				else if(!strcmp(command,"drive")){ //if COMMAND is 'drive'
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
-						sys_state.WS_angle_setpoint = atoi(command_opt); //send argument as angle to motor_output()
-
 						/*if either limit switch is triggered, switch direction and step off the trigger so that the motor won't be prevented from moving due to triggered limit switch*/
-						if(cfg_setting.LIMIT_SWITCH_1_PIN) == HIGH || rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN) == HIGH){
+						if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) == HIGH || rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN) == HIGH){
 							rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,-1*rc_gpio_get_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN));
 							int count;
-							for(count=0;count<29;count++){
+							for(count=0;count<66;count++){
 								/*Number of steps (count) determined by: distance needed to untrigger switch divided by timing belt pulley radius to find angle of arc in rad
-								then convert rad into degrees, and divide by number of degrees per step (given in motor spec) to find steps. in this case switch protrudes 0.9" and pulley is 1" rad so
-								arc is 0.9 rad =  51.6 deg. With 1.8deg per step, get 28.66 steps needed to release switch.*/
+								then convert rad into degrees, and divide by number of degrees per step (given in motor spec) to find steps. in this case switch protrudes 0.9" and pulley is 0.875" radius so
+								arc is 1.028 rad =  58.9 deg. With 1.8deg per step, 1/2 microstepping makes it 0.9deg per step, so get 65.48 steps needed to release switch.*/
 								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH);
 								rc_usleep(100); /* want it done quickly*/
 								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
 								rc_usleep(150); /*short delay so releasing switch doesnt interfere with control responsiveness*/
 							}
 						}
+						sys_state.WS_angle_setpoint = atoi(command_opt); //send argument as angle to motor_output()
 					}
 					else{
 						printf("Invalid command.\n");
@@ -418,6 +406,8 @@ void* read_input(void* ptr){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
 						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, '\0'};
+						printf("%f\n",bl_arg_dist[0] );
+						printf("%f\n",bl_arg_dist[1] );
 						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, '\0'}; //set up pulse pin arguement
 						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, '\0'}; //set up dir pin arguement
 						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
@@ -494,7 +484,7 @@ void* printf_loop(void* ptr){
 			printf("  Roll  |");
 			printf("  WS Delay  |");
 			printf("  Error  |");
-			printf(" 	LS L  |");
+			printf("  LS L  |");
 			printf("  LS R  |");
 			printf("  Battery Voltage  |");
 			printf("\n");
@@ -507,12 +497,12 @@ void* printf_loop(void* ptr){
 		// decide what to print or exit
 		if(new_state == RUNNING){
 			printf("\r");
-			printf("%6.2f  |", sys_state.angle_about_y_axis);
-			printf("%7.2f  |", sys_state.angle_about_x_axis);
+			printf("  %5.2f  |", sys_state.angle_about_y_axis);
+			printf("%6.2f  |", sys_state.angle_about_x_axis);
 			printf("%10.2d  |", cfg_setting.PWM_DELAY);
 			printf("%7.2f  |", controller_state.error);
-			printf("%5.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN));
-			printf("%5.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN));
+			printf("%6.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN));
+			printf("%6.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN));
 			printf("%17.2f  |", sys_state.battery_voltage);
 			fflush(stdout);
 		}
@@ -690,6 +680,7 @@ int get_config_settings(){
 	else{
 	fprintf(stderr, "No 'LIMIT_SWITCH_2_PIN' setting in configuration file.\n");
 	}
+	printf("%d\n",cfg_setting.LIMIT_SWITCH_2_PIN );
 
 	if(config_lookup_int(&cfg, "BL_MOTOR_CHANNEL_L", &cfg_value_int)){
   	cfg_setting.BL_MOTOR_CHANNEL_L = cfg_value_int;
@@ -784,6 +775,23 @@ int get_config_settings(){
 
 	return 0;
 }
+
+/*******************************************************************************
+* void* battery_checker(void* ptr)
+*
+* Checks battery voltage to ensure it's normal.
+*******************************************************************************/
+void* battery_checker(void* ptr){
+		float new_v;
+		while(rc_get_state()!=EXITING){
+			new_v = rc_battery_voltage();
+			// if the value doesn't make sense, use nominal voltage
+			if (new_v>9.0 || new_v<5.0) new_v = cfg_setting.V_NOMINAL;
+			sys_state.battery_voltage = new_v;
+			rc_usleep(1000000 / cfg_setting.BATTERY_CHECK_HZ);
+		}
+		return NULL;
+	}
 
 /*******************************************************************************
 * char *trimwhitespace(char *str)
