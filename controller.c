@@ -42,6 +42,9 @@ typedef struct cfg_settings_t{
 	int LIMIT_SWITCH_1_PIN;
 	int LIMIT_SWITCH_2_PIN;
 
+	int WINGOVER_ANGLES[10];
+	int WINGOVER_TIMING[10];
+
 } cfg_settings_t;
 
 /*******************************************************************************
@@ -56,6 +59,8 @@ typedef struct controller_state_t{
 		float last_error;
 		float derivative;
 		float integral;
+		int wingover_flag;
+		int i;
 } controller_state_t;
 
 /*******************************************************************************
@@ -258,6 +263,11 @@ void* motor_output(void* ptr){
 
 		//PID control
 		while(rc_get_state()!=EXITING){
+
+			if(controller_state.wingover_flag == 1 && cfg_setting.WINGOVER_ANGLES[controller_state.i] != '\0'){
+				sys_state.WS_angle_setpoint = cfg_setting.WINGOVER_ANGLES[controller_state.i];
+				controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
+			}
 			//set motor direction based on sign of error signal
 			if(controller_state.error<0){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
@@ -269,6 +279,16 @@ void* motor_output(void* ptr){
 			/*also checks if limit switches were hit so it doesn't rip itself apart trying to get to the setpoint*/
 				if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) != HIGH && rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN) != HIGH  && abs(controller_state.last_error) > 2.0  && abs(controller_state.error) > 2.0){
 					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
+				}
+				else if (controller_state.wingover_flag == 1 && abs(controller_state.last_error) <= 2.0  && abs(controller_state.error) <= 2.0){
+					rc_usleep(cfg_setting.WINGOVER_TIMING[controller_state.i]);
+					if(controller_state.i < (sizeof(cfg_setting.WINGOVER_ANGLES)/sizeof(cfg_setting.WINGOVER_ANGLES[0]))-1){
+						controller_state.i++;
+					}
+					else{
+						controller_state.wingover_flag = 0;
+						sys_state.WS_angle_setpoint = 0.0;
+					}
 				}
 				rc_usleep(150); //pulse width
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
@@ -284,6 +304,7 @@ void* motor_output(void* ptr){
 				cfg_setting.PWM_DELAY = 1000*cfg_setting.K_P*(1/round(abs(WS_control_signal)));
 				rc_usleep(cfg_setting.PWM_DELAY); //wait between pulses
 			}
+
 		}
 	return NULL;
 }
@@ -295,8 +316,7 @@ void* motor_output(void* ptr){
 int brakeline_control(float dist[], int pul_pin[], int dir_pin[]){
 	int i;
 	float bl_dist;
-	printf("%f\n",dist[0] );
-	printf("%f\n",dist[1] );
+
 	/*set direction for each motor depending on its polarity (based on orientation)*/
 	if(dist[0] >= 0){
 		rc_gpio_set_value_mmap(dir_pin[0],HIGH);
@@ -319,9 +339,7 @@ int brakeline_control(float dist[], int pul_pin[], int dir_pin[]){
 	else if (dist[1]!='\0'){
 		bl_dist = abs(dist[1]);
 	}
-	printf("%f\n",bl_dist );
-	printf("%d\n", pul_pin[0]);
-	printf("%d\n", pul_pin[1]);
+
 	for(i=0;i*cfg_setting.BL_STEP_TO_DIST<bl_dist;i++){
 
 		rc_gpio_set_value_mmap(pul_pin[0],HIGH); //pulse on left motor
@@ -443,8 +461,48 @@ void* read_input(void* ptr){
 						print_usage(); //otherwise show correct command syntax
 					}
 				}
-				else if (!strcmp(command,"swing")){
-
+				else if (!strcmp(command,"wingover")){
+					controller_state.wingover_flag = 1;
+					controller_state.i = 0;
+				}
+				else if (!strcmp(command,"brakel")){
+					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
+					if(command_opt != NULL){ //if there is an arguement passed
+						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, '\0'};
+						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, '\0'}; //set up pulse pin arguement
+						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, '\0'}; //set up dir pin arguement
+						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
+					}
+					else{
+						printf("Invalid command.\n");
+						print_usage(); //otherwise show correct command syntax
+					}
+				}
+				else if (!strcmp(command,"braker")){
+					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
+					if(command_opt != NULL){ //if there is an arguement passed
+						float bl_arg_dist[2] = {'\0', atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R};
+						int bl_arg_pul[2] = {'\0', cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin arguement
+						int bl_arg_dir[2] = {'\0', cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin arguement
+						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
+					}
+					else{
+						printf("Invalid command.\n");
+						print_usage(); //otherwise show correct command syntax
+					}
+				}
+				else if (!strcmp(command,"brakes")){
+					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
+					if(command_opt != NULL){ //if there is an arguement passed
+						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R};
+						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin arguement
+						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin arguement
+						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
+					}
+					else{
+						printf("Invalid command.\n");
+						print_usage(); //otherwise show correct command syntax
+					}
 				}
 				else if (!strcmp(command,"exit")){
 					cleanup_everything();
@@ -587,6 +645,7 @@ int setup_gpio_pins(){
 	return 0;
 }
 
+
 /*******************************************************************************
 * int get_settings()
 *
@@ -680,7 +739,6 @@ int get_config_settings(){
 	else{
 	fprintf(stderr, "No 'LIMIT_SWITCH_2_PIN' setting in configuration file.\n");
 	}
-	printf("%d\n",cfg_setting.LIMIT_SWITCH_2_PIN );
 
 	if(config_lookup_int(&cfg, "BL_MOTOR_CHANNEL_L", &cfg_value_int)){
   	cfg_setting.BL_MOTOR_CHANNEL_L = cfg_value_int;
@@ -772,11 +830,31 @@ int get_config_settings(){
 	else{
 	fprintf(stderr, "No 'K_D' setting in configuration file.\n");
 	}
+	int j;
+	config_setting_t *setting1, *setting2;
+	setting1 = config_lookup(&cfg,"WINGOVER_ANGLES");
+	if(setting1 != NULL){
+		for(j=0;j<config_setting_length(setting1);j++){
+			cfg_setting.WINGOVER_ANGLES[j] = config_setting_get_int_elem(setting1,j);
+		}
+	}
+	else{
+		fprintf(stderr, "No 'WINGOVER_ANGLES' setting in configuration file.\n");
+	}
 
+	setting2 = config_lookup(&cfg,"WINGOVER_TIMING");
+	if(setting2 != NULL){
+		for(j=0;j<config_setting_length(setting2);j++){
+			cfg_setting.WINGOVER_TIMING[j] = config_setting_get_int_elem(setting2,j);
+		}
+	}
+	else{
+		fprintf(stderr, "No 'WINGOVER_TIMING' setting in configuration file.\n");
+	}
 	return 0;
 }
 
-/*******************************************************************************
+/******************************************************************************
 * void* battery_checker(void* ptr)
 *
 * Checks battery voltage to ensure it's normal.
@@ -792,6 +870,7 @@ void* battery_checker(void* ptr){
 		}
 		return NULL;
 	}
+
 
 /*******************************************************************************
 * char *trimwhitespace(char *str)
