@@ -25,7 +25,7 @@ To run: 'sudo ./controller'
 
 
 ## Example connmanctl wifi profile for university-style internet with login credentials.  
-### Place in text file called WIFI_NAME.config.  
+### Place in text file called WIFI_NAME.config and move to the directory /var/lib/connman.  
 
 [service_WIFI_NAME]  
  Type = wifi  
