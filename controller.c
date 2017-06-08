@@ -301,7 +301,7 @@ void* motor_output(void* ptr){
 
 			if(abs(WS_control_signal) >= 0.5){
 				/*assuming inverse relationship btwn error and delay*/
-				cfg_setting.PWM_DELAY = cfg_setting.K_P*(1/round(abs(WS_control_signal)));
+				cfg_setting.PWM_DELAY = 1000*cfg_setting.K_P*(1/round(abs(WS_control_signal)));
 				rc_usleep(cfg_setting.PWM_DELAY); //wait between pulses
 			}
 
@@ -397,22 +397,37 @@ void* read_input(void* ptr){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
 						/*if either limit switch is triggered, switch direction and step off the trigger so that the motor won't be prevented from moving due to triggered limit switch*/
-						if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) == HIGH){
-							rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
-								}
-						else if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN)==HIGH){
-								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
-							}
+
+
+							if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN)==HIGH || rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN)==HIGH){
+								//int which_switch;
+								if(sys_state.WS_angle_setpoint<0){
+										sys_state.WS_angle_setpoint = abs(sys_state.angle_about_x_axis) + 50;
+									}
+									else if(sys_state.WS_angle_setpoint>0){
+											sys_state.WS_angle_setpoint = abs(sys_state.angle_about_x_axis) - 50;
+										}
+/*							if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) == HIGH){
+							//	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
+								which_switch = cfg_setting.LIMIT_SWITCH_1_PIN;
+									}
+							else if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN)==HIGH){
+								//	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
+								which_switch = cfg_setting.LIMIT_SWITCH_2_PIN;
+							}*/
 							int count;
-							for(count=0;count<200;count++){
+							for(count=0;count<150;count++){
 								/*Number of steps (count) determined by: distance needed to untrigger switch divided by timing belt pulley radius to find angle of arc in rad
 								then convert rad into degrees, and divide by number of degrees per step (given in motor spec) to find steps. in this case switch protrudes 0.9" and pulley is 0.875" radius so
 								arc is 1.028 rad =  58.9 deg. With 1.8deg per step, 1/2 microstepping makes it 0.9deg per step, so get 65.48 steps needed to release switch.*/
+
 								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH);
 								rc_usleep(300); /* want it done quickly*/
 								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
 								rc_usleep(500); /*short delay so releasing switch doesnt interfere with control responsiveness*/
 							}
+
+						}
 						sys_state.WS_angle_setpoint = atoi(command_opt); //send argument as angle to motor_output()
 					}
 					else{
