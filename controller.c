@@ -270,10 +270,10 @@ void* motor_output(void* ptr){
 			}
 			//set motor direction based on sign of error signal
 			if(controller_state.error<0){
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
+				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
 			}
 			else{
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
+				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
 			}
 			/*checks if errors were neglibible so that it doesn't send constant high if there was zero delay*/
 			/*also checks if limit switches were hit so it doesn't rip itself apart trying to get to the setpoint*/
@@ -290,7 +290,7 @@ void* motor_output(void* ptr){
 						sys_state.WS_angle_setpoint = 0.0;
 					}
 				}
-				rc_usleep(150); //pulse width
+				rc_usleep(300); //pulse width
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
 
 			//PID
@@ -301,7 +301,7 @@ void* motor_output(void* ptr){
 
 			if(abs(WS_control_signal) >= 0.5){
 				/*assuming inverse relationship btwn error and delay*/
-				cfg_setting.PWM_DELAY = 1000*cfg_setting.K_P*(1/round(abs(WS_control_signal)));
+				cfg_setting.PWM_DELAY = cfg_setting.K_P*(1/round(abs(WS_control_signal)));
 				rc_usleep(cfg_setting.PWM_DELAY); //wait between pulses
 			}
 
@@ -397,19 +397,22 @@ void* read_input(void* ptr){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
 						/*if either limit switch is triggered, switch direction and step off the trigger so that the motor won't be prevented from moving due to triggered limit switch*/
-						if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) == HIGH || rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN) == HIGH){
-							rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,-1*rc_gpio_get_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN));
+						if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) == HIGH){
+							rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
+								}
+						else if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN)==HIGH){
+								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
+							}
 							int count;
-							for(count=0;count<66;count++){
+							for(count=0;count<200;count++){
 								/*Number of steps (count) determined by: distance needed to untrigger switch divided by timing belt pulley radius to find angle of arc in rad
 								then convert rad into degrees, and divide by number of degrees per step (given in motor spec) to find steps. in this case switch protrudes 0.9" and pulley is 0.875" radius so
 								arc is 1.028 rad =  58.9 deg. With 1.8deg per step, 1/2 microstepping makes it 0.9deg per step, so get 65.48 steps needed to release switch.*/
 								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH);
-								rc_usleep(100); /* want it done quickly*/
+								rc_usleep(300); /* want it done quickly*/
 								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
-								rc_usleep(150); /*short delay so releasing switch doesnt interfere with control responsiveness*/
+								rc_usleep(500); /*short delay so releasing switch doesnt interfere with control responsiveness*/
 							}
-						}
 						sys_state.WS_angle_setpoint = atoi(command_opt); //send argument as angle to motor_output()
 					}
 					else{
@@ -545,6 +548,7 @@ void* printf_loop(void* ptr){
 			printf("  LS L  |");
 			printf("  LS R  |");
 			printf("  Battery Voltage  |");
+			printf("  WS Dir  |");
 			printf("\n");
 		}
 		else if(new_state==PAUSED && last_state!=PAUSED){
@@ -562,6 +566,7 @@ void* printf_loop(void* ptr){
 			printf("%6.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN));
 			printf("%6.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN));
 			printf("%17.2f  |", sys_state.battery_voltage);
+			printf("%8.2d  |", rc_gpio_get_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN));
 			fflush(stdout);
 		}
 		rc_usleep(1000000 / cfg_setting.PRINTF_HZ);
@@ -601,7 +606,7 @@ int setup_gpio_pins(){
 	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
 
 	/*Weight-shift motor direction pin*/
-	rc_set_pinmux_mode(cfg_setting.WS_MOTOR_DIR_PIN, PINMUX_GPIO);
+	rc_set_pinmux_mode(cfg_setting.WS_MOTOR_DIR_PIN, PINMUX_GPIO_PU);
 	rc_gpio_export(cfg_setting.WS_MOTOR_DIR_PIN);
 	rc_gpio_set_dir(cfg_setting.WS_MOTOR_DIR_PIN, OUTPUT_PIN);
 	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
@@ -613,7 +618,7 @@ int setup_gpio_pins(){
 	rc_gpio_set_value_mmap(cfg_setting.BL_MOTOR_CHANNEL_L,LOW);
 
 	/*Left Brake Line motor direction pin*/
-	rc_set_pinmux_mode(cfg_setting.BL_MOTOR_DIR_PIN_L, PINMUX_GPIO);
+	rc_set_pinmux_mode(cfg_setting.BL_MOTOR_DIR_PIN_L, PINMUX_GPIO_PU);
 	rc_gpio_export(cfg_setting.BL_MOTOR_DIR_PIN_L);
 	rc_gpio_set_dir(cfg_setting.BL_MOTOR_DIR_PIN_L, OUTPUT_PIN);
 	rc_gpio_set_value_mmap(cfg_setting.BL_MOTOR_DIR_PIN_L,LOW);
@@ -625,19 +630,19 @@ int setup_gpio_pins(){
 	rc_gpio_set_value_mmap(cfg_setting.BL_MOTOR_CHANNEL_R,LOW);
 
 	/*Right Brake Line motor direction pin*/
-	rc_set_pinmux_mode(cfg_setting.BL_MOTOR_DIR_PIN_R, PINMUX_GPIO);
+	rc_set_pinmux_mode(cfg_setting.BL_MOTOR_DIR_PIN_R, PINMUX_GPIO_PU);
 	rc_gpio_export(cfg_setting.BL_MOTOR_DIR_PIN_R);
 	rc_gpio_set_dir(cfg_setting.BL_MOTOR_DIR_PIN_R, OUTPUT_PIN);
 	rc_gpio_set_value_mmap(cfg_setting.BL_MOTOR_DIR_PIN_R,LOW);
 
 	/*Limit switch 1 pin*/
-	rc_set_pinmux_mode(cfg_setting.LIMIT_SWITCH_1_PIN, PINMUX_GPIO);
+	rc_set_pinmux_mode(cfg_setting.LIMIT_SWITCH_1_PIN, PINMUX_GPIO_PU);
 	rc_gpio_export(cfg_setting.LIMIT_SWITCH_1_PIN);
 	rc_gpio_set_dir(cfg_setting.LIMIT_SWITCH_1_PIN, INPUT_PIN);
 	rc_gpio_set_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN,LOW);
 
 	/*Limit switch 2 pin*/
-	rc_set_pinmux_mode(cfg_setting.LIMIT_SWITCH_2_PIN, PINMUX_GPIO);
+	rc_set_pinmux_mode(cfg_setting.LIMIT_SWITCH_2_PIN, PINMUX_GPIO_PU);
 	rc_gpio_export(cfg_setting.LIMIT_SWITCH_2_PIN);
 	rc_gpio_set_dir(cfg_setting.LIMIT_SWITCH_2_PIN, INPUT_PIN);
 	rc_gpio_set_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN,LOW);
