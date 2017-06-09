@@ -61,6 +61,9 @@ typedef struct controller_state_t{
 		float integral;
 		int wingover_flag;
 		int i;
+		float WS_control_signal;
+		struct timespec seconds;
+		FILE *data_file;
 } controller_state_t;
 
 /*******************************************************************************
@@ -165,6 +168,7 @@ int main(){
 		return -1;
 	}
 
+	controller_state.data_file = fopen("data_file.txt","w");
 	//start thread for reading user input
 	pthread_create(&read_input_thread, NULL, read_input, (void*) NULL);
 
@@ -202,7 +206,7 @@ int cleanup_everything(){
 	//rc_set_cpu_freq(FREQ_ONDEMAND);
 	pthread_cancel(battery_thread);
 	pthread_cancel(printf_thread);
-
+	fclose(controller_state.data_file);
 	rc_gpio_unexport(cfg_setting.WS_MOTOR_CHANNEL);
 	rc_gpio_unexport(cfg_setting.WS_MOTOR_DIR_PIN);
 	rc_gpio_unexport(cfg_setting.BL_MOTOR_CHANNEL_L);
@@ -259,7 +263,7 @@ void collect_data(){
 * Outputs PWM to motors based on number of PID control of PWM delay.
 *******************************************************************************/
 void* motor_output(void* ptr){
-		float WS_control_signal;
+		//float controller_state.WS_control_signal;
 
 		//PID control
 		while(rc_get_state()!=EXITING){
@@ -269,7 +273,7 @@ void* motor_output(void* ptr){
 				controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
 			}
 			//set motor direction based on sign of error signal
-			if(controller_state.error<0){
+			if(controller_state.error>0){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
 			}
 			else{
@@ -297,11 +301,11 @@ void* motor_output(void* ptr){
 			controller_state.last_error = controller_state.error;
 			controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
 			controller_state.derivative = controller_state.error - controller_state.last_error;
-			WS_control_signal = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_D*controller_state.derivative);
+			controller_state.WS_control_signal = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_D*controller_state.derivative);
 
-			if(abs(WS_control_signal) >= 0.5){
+			if(abs(controller_state.WS_control_signal) >= 0.1){
 				/*assuming inverse relationship btwn error and delay*/
-				cfg_setting.PWM_DELAY = 1000*cfg_setting.K_P*(1/round(abs(WS_control_signal)));
+				cfg_setting.PWM_DELAY = round(1000*(1/abs(controller_state.WS_control_signal)));
 				rc_usleep(cfg_setting.PWM_DELAY); //wait between pulses
 			}
 
@@ -523,7 +527,6 @@ void* read_input(void* ptr){
 					}
 				}
 				else if (!strcmp(command,"exit")){
-					cleanup_everything();
 					rc_set_state(EXITING);
 					return NULL;
 				}
@@ -564,6 +567,7 @@ void* printf_loop(void* ptr){
 			printf("  LS R  |");
 			printf("  Battery Voltage  |");
 			printf("  WS Dir  |");
+			printf("  WS Ctl  |");
 			printf("\n");
 		}
 		else if(new_state==PAUSED && last_state!=PAUSED){
@@ -576,12 +580,17 @@ void* printf_loop(void* ptr){
 			printf("\r");
 			printf("  %5.2f  |", sys_state.angle_about_y_axis);
 			printf("%6.2f  |", sys_state.angle_about_x_axis);
+			clock_gettime(CLOCK_MONOTONIC,&controller_state.seconds);
+			char data[20];
+			sprintf(data,"%f,%lf\n",sys_state.angle_about_x_axis,controller_state.seconds.tv_sec + 1e-9 * controller_state.seconds.tv_nsec);
+			fputs(data,controller_state.data_file);
 			printf("%10.2d  |", cfg_setting.PWM_DELAY);
 			printf("%7.2f  |", controller_state.error);
 			printf("%6.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN));
 			printf("%6.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN));
 			printf("%17.2f  |", sys_state.battery_voltage);
 			printf("%8.2d  |", rc_gpio_get_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN));
+			printf("%8.2f  |", controller_state.WS_control_signal);
 			fflush(stdout);
 		}
 		rc_usleep(1000000 / cfg_setting.PRINTF_HZ);
