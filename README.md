@@ -10,7 +10,7 @@ To run: 'sudo ./controller'
 ## Files:
 - paraglider_config.cfg -- Configuration file, list of settings that can easily be changed without needing to recompile.
 - controller.c -- Main control code.
-- install.sh -- Installs dependency packages. Must change the wifi address and set up wifi profile according to connmanctl. See below for example.
+- install.sh -- Installs dependency packages. Must change the wifi address and set up wifi profile according to connmanctl requirements. See below for example.
 - Makefile -- Compiles with correct dependencies and flags.
 
 ## Command List: 
