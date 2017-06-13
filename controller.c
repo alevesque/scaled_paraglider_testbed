@@ -9,39 +9,43 @@
 *******************************************************************************/
 typedef struct cfg_settings_t{
 
+	/*IMU sample rate*/
 	int SAMPLE_RATE_HZ;
 
-	// Structural properties of BBB
+	/*Structural properties of Beaglebone*/
 	int STEPS_PER_WS_ANGLE_DEGREE;
 	float CAPE_MOUNT_ANGLE_X;
 	float CAPE_MOUNT_ANGLE_Y;
 	float CAPE_MOUNT_ANGLE_Z;
 	int V_NOMINAL;
-	int PWM_DELAY;
-	// electrical hookups
+	int PULSE_DELAY;
+
+	/*electrical hookups*/
 	int WS_MOTOR_CHANNEL;
 	int WS_MOTOR_DIR_PIN;
-
 	int BL_MOTOR_CHANNEL_L;
 	int BL_MOTOR_DIR_PIN_L;
 	int BL_MOTOR_CHANNEL_R;
 	int BL_MOTOR_DIR_PIN_R;
 	int BL_MOTOR_POLARITY_L;
 	int BL_MOTOR_POLARITY_R;
+	int LIMIT_SWITCH_1_PIN;
+	int LIMIT_SWITCH_2_PIN;
+
+	/*# steps per cm in brake line travel*/
 	float BL_STEP_TO_DIST;
-	// Thread Loop Rates
+
+	/*Thread Loop Rates */
 	int	BATTERY_CHECK_HZ;
 	int	PRINTF_HZ;
 	int	READ_INPUT_HZ;
 
-	// PID Parameters
+	/* PID Parameters*/
 	float K_P;
 	float K_I;
 	float K_D;
 
-	int LIMIT_SWITCH_1_PIN;
-	int LIMIT_SWITCH_2_PIN;
-
+	/*wingover arrays*/
 	int WINGOVER_ANGLES[10];
 	int WINGOVER_TIMING[10];
 
@@ -54,14 +58,13 @@ typedef struct cfg_settings_t{
 *******************************************************************************/
 typedef struct controller_state_t{
 		//setup controller values
-		int steps;
 		float error;
 		float last_error;
 		float derivative;
-		float integral;
 		int wingover_flag;
 		int i;
 		float WS_control_signal;
+		float WS_angle_setpoint;
 		struct timespec seconds;
 		FILE *data_file;
 } controller_state_t;
@@ -75,13 +78,12 @@ typedef struct core_state_t{
 	float angle_about_x_axis; 		// body angle radians
 	float angle_about_y_axis; 		// body angle radians
 	float battery_voltage; 		// battery voltage
-	float WS_angle_setpoint;			// output of controller to weight shift
 } core_state_t;
 
 /*******************************************************************************
 * orientation_t
 *
-* This is the system orientation as seen by accelerometer, gyroscope
+* This is the system orientation as seen by accelerometer, gyroscope.
 *******************************************************************************/
 typedef struct orientation_t{
 	float x_gyro;
@@ -92,12 +94,12 @@ typedef struct orientation_t{
 
 
 /*******************************************************************************
-* Local Function declarations
+* Function Declarations
 *******************************************************************************/
 // IMU interrupt routine
 void collect_data();
 
-// threads
+// thread declarations
 void* battery_checker(void* ptr);
 void* printf_loop(void* ptr);
 void* read_input(void* ptr);
@@ -121,6 +123,9 @@ controller_state_t controller_state;
 config_t cfg;
 cfg_settings_t cfg_setting;
 
+/*******************************************************************************
+* Threads
+*******************************************************************************/
 pthread_t battery_thread;
 pthread_t read_input_thread;
 pthread_t printf_thread;
@@ -129,7 +134,7 @@ pthread_t motor_thread;
 /*******************************************************************************
 * main()
 *
-* Initialize the filters, IMU, threads, & wait until shut down
+* Initialize the GPIO pins, IMU, threads, & wait until shut down
 *******************************************************************************/
 int main(){
 
@@ -144,47 +149,51 @@ int main(){
 	}
 	rc_set_state(UNINITIALIZED);
 
+	/*set default config settings for IMU*/
 	rc_imu_config_t conf = rc_default_imu_config();
 
-	//get configuration settings
+	/*get configuration settings*/
 	get_config_settings();
 
+	/*set up pins for General Purpose Input/Output mode (GPIO)*/
 	setup_gpio_pins();
 
-	// start a thread to slowly sample battery
+	/*thread to sample beaglebone battery*/
 	pthread_create(&battery_thread, NULL, battery_checker, (void*) NULL);
-	// wait for the battery thread to make the first read
+
+	/* wait for the battery thread to make the first read*/
 	while(sys_state.battery_voltage==0 && rc_get_state()!=EXITING) usleep(1000);
 
-	// set up IMU configuration
+	/* set up IMU configuration*/
 	conf.dmp_sample_rate = cfg_setting.SAMPLE_RATE_HZ;
 
-	//set orientation of beaglebone
+	/*set orientation of beaglebone */
 	conf.orientation = ORIENTATION_Z_UP;
 
-	// start imu
+	/* start imu */
 	if(rc_initialize_imu_dmp(&data, conf)){
 		printf("ERROR: IMU initialization failed!\n");
 		return -1;
 	}
 
+	/*open data file for writing CSV position information for plotting*/
 	controller_state.data_file = fopen("data_file.txt","w");
+
 	//start thread for reading user input
 	pthread_create(&read_input_thread, NULL, read_input, (void*) NULL);
 
 	/*start thread for motor output*/
 	pthread_create(&motor_thread, NULL, motor_output, (void*) NULL);
 
-	//set imu interrupt function
+	/*set imu interrupt function - when IMU detects change, run this funciton*/
 	rc_set_imu_interrupt_func(&collect_data);
 
+	/*start actual stuff*/
 	rc_set_state(RUNNING);
 	rc_set_led(RED,0);
 	rc_set_led(GREEN,1);
 
-	printf("@-----------------------------@\n");
-	printf("| Paraglider Control Software |\n");
-	printf("@-----------------------------@\n\n");
+
 	//wait while stuff is going on
 	while(rc_get_state()!=EXITING){
 		rc_usleep(10000);
@@ -260,53 +269,63 @@ void collect_data(){
 /*******************************************************************************
 * void* motor_output(void* ptr)
 *
-* Outputs PWM to motors based on number of PID control of PWM delay.
+* Outputs PDM (Pulse Delay Modulation) to motors based on PID control of pulse delay.
 *******************************************************************************/
 void* motor_output(void* ptr){
-		//float controller_state.WS_control_signal;
 
 		//PID control
 		while(rc_get_state()!=EXITING){
 
-			if(controller_state.wingover_flag == 1 && cfg_setting.WINGOVER_ANGLES[controller_state.i] != '\0'){
-				sys_state.WS_angle_setpoint = cfg_setting.WINGOVER_ANGLES[controller_state.i];
-				controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
+			/*if doing wingover, and length of wingover vector (number of setpoints in cfg_setting.WINGOVER_ANGLES) minus the amount of points gone to (controller_state.i) isn't zero*/
+			if(controller_state.wingover_flag == 1 && (sizeof(cfg_setting.WINGOVER_ANGLES)/sizeof(cfg_setting.WINGOVER_ANGLES[0])) - controller_state.i != 0){
+				/*setpoint goes to first wingover point*/
+				controller_state.WS_angle_setpoint = cfg_setting.WINGOVER_ANGLES[controller_state.i];
+				controller_state.error = controller_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
 			}
-			//set motor direction based on sign of error signal
+
+			/*set motor direction based on sign of error signal*/
 			if(controller_state.error>0){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
 			}
 			else{
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
 			}
+
 			/*checks if errors were neglibible so that it doesn't send constant high if there was zero delay*/
 			/*also checks if limit switches were hit so it doesn't rip itself apart trying to get to the setpoint*/
 				if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) != HIGH && rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN) != HIGH  && abs(controller_state.last_error) > 2.0  && abs(controller_state.error) > 2.0){
 					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
 				}
+				/*otherwise, if error is low and you're doing wingover*/
 				else if (controller_state.wingover_flag == 1 && abs(controller_state.last_error) <= 2.0  && abs(controller_state.error) <= 2.0){
+					/* pause at the corresponding post-setpoint delay*/
 					rc_usleep(cfg_setting.WINGOVER_TIMING[controller_state.i]);
+
+					/*and if you aren't at the end of the wingover setpoint array, increase the iteration*/
 					if(controller_state.i < (sizeof(cfg_setting.WINGOVER_ANGLES)/sizeof(cfg_setting.WINGOVER_ANGLES[0]))-1){
 						controller_state.i++;
 					}
+					/*otherwise you are at the end so reset to neutral position and quit*/
 					else{
+						controller_state.i = 0;
 						controller_state.wingover_flag = 0;
-						sys_state.WS_angle_setpoint = 0.0;
+						controller_state.WS_angle_setpoint = 0.0;
 					}
 				}
-				rc_usleep(300); //pulse width
-				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); //pulse off
+				rc_usleep(300); /*stepper motors use fixed pulse width and modulate delay*/
+				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); /*pulse off*/
 
-			//PID
+			/*PD control */
 			controller_state.last_error = controller_state.error;
-			controller_state.error = sys_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
+			controller_state.error = controller_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
 			controller_state.derivative = controller_state.error - controller_state.last_error;
 			controller_state.WS_control_signal = (cfg_setting.K_P*controller_state.error) + (cfg_setting.K_D*controller_state.derivative);
 
+			/*pulse delay modulation*/
 			if(abs(controller_state.WS_control_signal) >= 0.1){
-				/*assuming inverse relationship btwn error and delay*/
-				cfg_setting.PWM_DELAY = round(1000*(1/abs(controller_state.WS_control_signal)));
-				rc_usleep(cfg_setting.PWM_DELAY); //wait between pulses
+				/*assuming inverse relationship btwn error and delay: large error means moves faster to compensate and vice versa for small error*/
+				cfg_setting.PULSE_DELAY = round(1000*(1/abs(controller_state.WS_control_signal)));
+				rc_usleep(cfg_setting.PULSE_DELAY); /*wait between pulses*/
 			}
 
 		}
@@ -344,6 +363,7 @@ int brakeline_control(float dist[], int pul_pin[], int dir_pin[]){
 		bl_dist = abs(dist[1]);
 	}
 
+	/*move each for fixed number of steps. no need for closed loop control for this basic task.*/
 	for(i=0;i*cfg_setting.BL_STEP_TO_DIST<bl_dist;i++){
 
 		rc_gpio_set_value_mmap(pul_pin[0],HIGH); //pulse on left motor
@@ -362,6 +382,9 @@ int brakeline_control(float dist[], int pul_pin[], int dir_pin[]){
 *******************************************************************************/
 void* read_input(void* ptr){
 
+	printf("@-----------------------------@\n");
+	printf("| Paraglider Control Software |\n");
+	printf("@-----------------------------@\n\n");
 	printf("Enter command ('help' for command list): \n");
 
 	while(rc_get_state()!=EXITING){
@@ -400,25 +423,17 @@ void* read_input(void* ptr){
 				else if(!strcmp(command,"drive")){ //if COMMAND is 'drive'
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
 					if(command_opt != NULL){ //if there is an arguement passed
+
 						/*if either limit switch is triggered, switch direction and step off the trigger so that the motor won't be prevented from moving due to triggered limit switch*/
-
-
 							if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN)==HIGH || rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN)==HIGH){
-								//int which_switch;
-								if(sys_state.WS_angle_setpoint<0){
-										sys_state.WS_angle_setpoint = abs(sys_state.angle_about_x_axis) + 50;
+
+								if(controller_state.WS_angle_setpoint<0){
+										controller_state.WS_angle_setpoint = abs(sys_state.angle_about_x_axis) + 50;
 									}
-									else if(sys_state.WS_angle_setpoint>0){
-											sys_state.WS_angle_setpoint = abs(sys_state.angle_about_x_axis) - 50;
+									else if(controller_state.WS_angle_setpoint>0){
+											controller_state.WS_angle_setpoint = abs(sys_state.angle_about_x_axis) - 50;
 										}
-/*							if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) == HIGH){
-							//	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
-								which_switch = cfg_setting.LIMIT_SWITCH_1_PIN;
-									}
-							else if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN)==HIGH){
-								//	rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,HIGH);
-								which_switch = cfg_setting.LIMIT_SWITCH_2_PIN;
-							}*/
+
 							int count;
 							for(count=0;count<150;count++){
 								/*Number of steps (count) determined by: distance needed to untrigger switch divided by timing belt pulley radius to find angle of arc in rad
@@ -426,30 +441,26 @@ void* read_input(void* ptr){
 								arc is 1.028 rad =  58.9 deg. With 1.8deg per step, 1/2 microstepping makes it 0.9deg per step, so get 65.48 steps needed to release switch.*/
 
 								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH);
-								rc_usleep(300); /* want it done quickly*/
+								rc_usleep(300); /* want it done smoothly for demonstration: 300|500 delay is very smooth*/
 								rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
-								rc_usleep(500); /*short delay so releasing switch doesnt interfere with control responsiveness*/
+								rc_usleep(500);
 							}
 
 						}
-						sys_state.WS_angle_setpoint = atoi(command_opt); //send argument as angle to motor_output()
+						controller_state.WS_angle_setpoint = atoi(command_opt); //send argument as angle to motor_output()
 					}
 					else{
 						printf("Invalid command.\n");
 						print_usage(); //otherwise show correct command syntax
 					}
 				}
-				else if (!strcmp(command,"wingover")){
-
-				}
+				/*if brake left should move*/
 				else if (!strcmp(command,"brakel")){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
-					if(command_opt != NULL){ //if there is an arguement passed
-						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, '\0'};
-						printf("%f\n",bl_arg_dist[0] );
-						printf("%f\n",bl_arg_dist[1] );
-						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, '\0'}; //set up pulse pin arguement
-						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, '\0'}; //set up dir pin arguement
+					if(command_opt != NULL){ /*if there is an argument passed*/
+						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, '\0'}; /*set only left to be driven, right to NULL*/
+						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, '\0'}; //set up pulse pin argument
+						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, '\0'}; //set up dir pin argument
 						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
 					}
 					else{
@@ -457,12 +468,13 @@ void* read_input(void* ptr){
 						print_usage(); //otherwise show correct command syntax
 					}
 				}
+				/*same as previous except for right motor*/
 				else if (!strcmp(command,"braker")){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
-					if(command_opt != NULL){ //if there is an arguement passed
-						float bl_arg_dist[2] = {'\0', atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R};
-						int bl_arg_pul[2] = {'\0', cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin arguement
-						int bl_arg_dir[2] = {'\0', cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin arguement
+					if(command_opt != NULL){ //if there is an argument passed
+						float bl_arg_dist[2] = {'\0', atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R}; /*left motor goes to NULL and right gets told to drive*/
+						int bl_arg_pul[2] = {'\0', cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin argument
+						int bl_arg_dir[2] = {'\0', cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin argument
 						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
 					}
 					else{
@@ -470,12 +482,13 @@ void* read_input(void* ptr){
 						print_usage(); //otherwise show correct command syntax
 					}
 				}
+				/*drive both BL motors*/
 				else if (!strcmp(command,"brakes")){
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
-					if(command_opt != NULL){ //if there is an arguement passed
+					if(command_opt != NULL){ //if there is an argument passed
 						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R};
-						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin arguement
-						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin arguement
+						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin argument
+						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin argument
 						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
 					}
 					else{
@@ -483,48 +496,10 @@ void* read_input(void* ptr){
 						print_usage(); //otherwise show correct command syntax
 					}
 				}
+				/*activate wingover code*/
 				else if (!strcmp(command,"wingover")){
 					controller_state.wingover_flag = 1;
 					controller_state.i = 0;
-				}
-				else if (!strcmp(command,"brakel")){
-					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
-					if(command_opt != NULL){ //if there is an arguement passed
-						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, '\0'};
-						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, '\0'}; //set up pulse pin arguement
-						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, '\0'}; //set up dir pin arguement
-						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
-					}
-					else{
-						printf("Invalid command.\n");
-						print_usage(); //otherwise show correct command syntax
-					}
-				}
-				else if (!strcmp(command,"braker")){
-					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
-					if(command_opt != NULL){ //if there is an arguement passed
-						float bl_arg_dist[2] = {'\0', atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R};
-						int bl_arg_pul[2] = {'\0', cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin arguement
-						int bl_arg_dir[2] = {'\0', cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin arguement
-						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
-					}
-					else{
-						printf("Invalid command.\n");
-						print_usage(); //otherwise show correct command syntax
-					}
-				}
-				else if (!strcmp(command,"brakes")){
-					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
-					if(command_opt != NULL){ //if there is an arguement passed
-						float bl_arg_dist[2] = {atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_L, atof(command_opt)*cfg_setting.BL_MOTOR_POLARITY_R};
-						int bl_arg_pul[2] = {cfg_setting.BL_MOTOR_CHANNEL_L, cfg_setting.BL_MOTOR_CHANNEL_R}; //set up pulse pin arguement
-						int bl_arg_dir[2] = {cfg_setting.BL_MOTOR_DIR_PIN_L, cfg_setting.BL_MOTOR_DIR_PIN_R}; //set up dir pin arguement
-						brakeline_control(bl_arg_dist,bl_arg_pul,bl_arg_dir); //control bl motors
-					}
-					else{
-						printf("Invalid command.\n");
-						print_usage(); //otherwise show correct command syntax
-					}
 				}
 				else if (!strcmp(command,"exit")){
 					rc_set_state(EXITING);
@@ -550,13 +525,13 @@ void* read_input(void* ptr){
 /*******************************************************************************
 * void* printf_loop(void* ptr)
 *
-* Thread to print information for debugging.
+* Thread to print information to screen.
 *******************************************************************************/
 void* printf_loop(void* ptr){
 	rc_state_t last_state, new_state; // keep track of last state
 	while(rc_get_state()!=EXITING){
 		new_state = rc_get_state();
-		// check if this is the first time since being paused
+		// check if this is the first time since being stopped
 		if(new_state==RUNNING && last_state!=RUNNING){
 			printf("\nRUNNING\n");
 			printf("  Pitch  |");
@@ -580,17 +555,21 @@ void* printf_loop(void* ptr){
 			printf("\r");
 			printf("  %5.2f  |", sys_state.angle_about_y_axis);
 			printf("%6.2f  |", sys_state.angle_about_x_axis);
-			clock_gettime(CLOCK_MONOTONIC,&controller_state.seconds);
-			char data[20];
-			sprintf(data,"%f,%lf\n",sys_state.angle_about_x_axis,controller_state.seconds.tv_sec + 1e-9 * controller_state.seconds.tv_nsec);
-			fputs(data,controller_state.data_file);
-			printf("%10.2d  |", cfg_setting.PWM_DELAY);
+			printf("%10.2d  |", cfg_setting.PULSE_DELAY);
 			printf("%7.2f  |", controller_state.error);
 			printf("%6.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN));
 			printf("%6.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN));
 			printf("%17.2f  |", sys_state.battery_voltage);
 			printf("%8.2d  |", rc_gpio_get_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN));
 			printf("%8.2f  |", controller_state.WS_control_signal);
+
+			/*get time in seconds and roll angle. Write into file as CSV for plotting in matlab. Optional, was only for getting pictures for poster*/
+			clock_gettime(CLOCK_MONOTONIC,&controller_state.seconds);
+			char data[20];
+			sprintf(data,"%f,%lf\n",sys_state.angle_about_x_axis,controller_state.seconds.tv_sec + 1e-9 * controller_state.seconds.tv_nsec);
+			fputs(data,controller_state.data_file);
+			/*************************/
+
 			fflush(stdout);
 		}
 		rc_usleep(1000000 / cfg_setting.PRINTF_HZ);
@@ -606,7 +585,7 @@ void* printf_loop(void* ptr){
 int print_usage(){
 	printf("\nCommand List: \n");
 	printf("1) display - Displays orientation data. 'display exit' stops display output.\n");
-	printf("2) drive # - Sets desired angle of # and sends to weight shift motor. \n");
+	printf("2) drive # - Sets desired angle of # (deg) and sends to weight shift motor. \n");
 	printf("3) brakel # - Pulls left brake line down # centimeters.\n");
 	printf("4) braker # - Pulls right brake line down # centimeters.\n");
 	printf("5) brakes # - Pulls both brake lines down # centimeters.\n");
@@ -734,11 +713,11 @@ int get_config_settings(){
 	fprintf(stderr, "No 'V_NOMINAL' setting in configuration file.\n");
 	}
 
-	if(config_lookup_int(&cfg, "PWM_DELAY", &cfg_value_int)){
-		cfg_setting.PWM_DELAY = cfg_value_int;
+	if(config_lookup_int(&cfg, "PULSE_DELAY", &cfg_value_int)){
+		cfg_setting.PULSE_DELAY = cfg_value_int;
 	}
 	else{
-	fprintf(stderr, "No 'PWM_DELAY' setting in configuration file.\n");
+	fprintf(stderr, "No 'PULSE_DELAY' setting in configuration file.\n");
 	}
 
 	if(config_lookup_int(&cfg, "WS_MOTOR_CHANNEL", &cfg_value_int)){
@@ -859,6 +838,7 @@ int get_config_settings(){
 	else{
 	fprintf(stderr, "No 'K_D' setting in configuration file.\n");
 	}
+	
 	int j;
 	config_setting_t *setting1, *setting2;
 	setting1 = config_lookup(&cfg,"WINGOVER_ANGLES");
