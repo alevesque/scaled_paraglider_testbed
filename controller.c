@@ -32,7 +32,7 @@ typedef struct cfg_settings_t{
 	int LIMIT_SWITCH_1_PIN;
 	int LIMIT_SWITCH_2_PIN;
 
-	/*# steps per cm in brake line travel*/
+	/*Number of steps per cm in brake line travel*/
 	float BL_STEP_TO_DIST;
 
 	/*Thread Loop Rates */
@@ -46,8 +46,8 @@ typedef struct cfg_settings_t{
 	float K_D;
 
 	/*wingover arrays*/
-	int WINGOVER_ANGLES[10];
-	int WINGOVER_TIMING[10];
+	int WINGOVER_ANGLES[30];
+	int WINGOVER_TIMING[30];
 
 } cfg_settings_t;
 
@@ -57,7 +57,7 @@ typedef struct cfg_settings_t{
 * This is the system state written to by the controller.
 *******************************************************************************/
 typedef struct controller_state_t{
-		//setup controller values
+		/*set up controller values*/
 		float error;
 		float last_error;
 		float derivative;
@@ -162,7 +162,7 @@ int main(){
 	pthread_create(&battery_thread, NULL, battery_checker, (void*) NULL);
 
 	/* wait for the battery thread to make the first read*/
-	while(sys_state.battery_voltage==0 && rc_get_state()!=EXITING) usleep(1000);
+	while(sys_state.battery_voltage==0 && rc_get_state()!=EXITING) rc_usleep(1000);
 
 	/* set up IMU configuration*/
 	conf.dmp_sample_rate = cfg_setting.SAMPLE_RATE_HZ;
@@ -273,12 +273,12 @@ void collect_data(){
 *******************************************************************************/
 void* motor_output(void* ptr){
 
-		//PID control
+		/*PID control*/
 		while(rc_get_state()!=EXITING){
 
 			/*if doing wingover, and length of wingover vector (number of setpoints in cfg_setting.WINGOVER_ANGLES) minus the amount of points gone to (controller_state.i) isn't zero*/
-			if(controller_state.wingover_flag == 1 && (sizeof(cfg_setting.WINGOVER_ANGLES)/sizeof(cfg_setting.WINGOVER_ANGLES[0])) - controller_state.i != 0){
-				/*setpoint goes to first wingover point*/
+			if(controller_state.wingover_flag == 1 && ((((sizeof(cfg_setting.WINGOVER_ANGLES))/((sizeof(cfg_setting.WINGOVER_ANGLES[0]))-2)) - controller_state.i) != 0)){
+				/*setpoint goes to next wingover point*/
 				controller_state.WS_angle_setpoint = cfg_setting.WINGOVER_ANGLES[controller_state.i];
 				controller_state.error = controller_state.WS_angle_setpoint - sys_state.angle_about_x_axis;
 			}
@@ -291,28 +291,55 @@ void* motor_output(void* ptr){
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_DIR_PIN,LOW);
 			}
 
+
+			/*if either limit switch is triggered, switch direction and step off the trigger so that the motor won't be prevented from moving due to triggered limit switch*/
+				if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN)==HIGH || rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN)==HIGH){
+
+					if(controller_state.WS_angle_setpoint<0){
+							controller_state.WS_angle_setpoint = abs(sys_state.angle_about_x_axis) + 50;
+
+						}
+					else if(controller_state.WS_angle_setpoint>0){
+								controller_state.WS_angle_setpoint = abs(sys_state.angle_about_x_axis) - 50;
+
+							}
+
+				int count;
+				for(count=0;count<150;count++){
+					/*Number of steps (count) determined by: distance needed to untrigger switch divided by timing belt pulley radius to find angle of arc in rad
+					then convert rad into degrees, and divide by number of degrees per step (given in motor spec) to find steps. in this case switch protrudes 0.9" and pulley is 0.875" radius so
+					arc is 1.028 rad =  58.9 deg. With 1.8deg per step, 1/2 microstepping makes it 0.9deg per step, so get 65.48 steps needed to release switch.*/
+
+					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH);
+					rc_usleep(100); /* want it done smoothly for demonstration: 300|500 delay is very smooth*/
+					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW);
+					rc_usleep(200);
+				}
+
+			}
 			/*checks if errors were neglibible so that it doesn't send constant high if there was zero delay*/
 			/*also checks if limit switches were hit so it doesn't rip itself apart trying to get to the setpoint*/
 				if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) != HIGH && rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN) != HIGH  && abs(controller_state.last_error) > 2.0  && abs(controller_state.error) > 2.0){
 					rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,HIGH); //pulse on
 				}
 				/*otherwise, if error is low and you're doing wingover*/
-				else if (controller_state.wingover_flag == 1 && abs(controller_state.last_error) <= 2.0  && abs(controller_state.error) <= 2.0){
+				else if (controller_state.wingover_flag == 1 && ((abs(controller_state.last_error) <= 2.0  && abs(controller_state.error) <= 2.0) || rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN) == HIGH || rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN) == HIGH)){
 					/* pause at the corresponding post-setpoint delay*/
 					rc_usleep(cfg_setting.WINGOVER_TIMING[controller_state.i]);
 
 					/*and if you aren't at the end of the wingover setpoint array, increase the iteration*/
-					if(controller_state.i < (sizeof(cfg_setting.WINGOVER_ANGLES)/sizeof(cfg_setting.WINGOVER_ANGLES[0]))-1){
+					if(controller_state.i < (sizeof(cfg_setting.WINGOVER_ANGLES))/((sizeof(cfg_setting.WINGOVER_ANGLES[0]))-2)){
 						controller_state.i++;
 					}
 					/*otherwise you are at the end so reset to neutral position and quit*/
 					else{
+						printf("ending\n" );
 						controller_state.i = 0;
 						controller_state.wingover_flag = 0;
 						controller_state.WS_angle_setpoint = 0.0;
 					}
 				}
-				rc_usleep(300); /*stepper motors use fixed pulse width and modulate delay*/
+				rc_usleep(100); /*stepper motors use fixed pulse width and modulate delay*/
 				rc_gpio_set_value_mmap(cfg_setting.WS_MOTOR_CHANNEL,LOW); /*pulse off*/
 
 			/*PD control */
@@ -422,16 +449,18 @@ void* read_input(void* ptr){
 				}
 				else if(!strcmp(command,"drive")){ //if COMMAND is 'drive'
 					snprintf(command_opt,strlen(command_opt)+1,"%li",strtol(command_opt,NULL,10)); //filter out non-numeric arguments to OPTION
-					if(command_opt != NULL){ //if there is an arguement passed
+					if(command_opt != NULL){ //if there is an argument passed
 
 						/*if either limit switch is triggered, switch direction and step off the trigger so that the motor won't be prevented from moving due to triggered limit switch*/
 							if(rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN)==HIGH || rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN)==HIGH){
 
 								if(controller_state.WS_angle_setpoint<0){
 										controller_state.WS_angle_setpoint = abs(sys_state.angle_about_x_axis) + 50;
+
 									}
 									else if(controller_state.WS_angle_setpoint>0){
 											controller_state.WS_angle_setpoint = abs(sys_state.angle_about_x_axis) - 50;
+
 										}
 
 							int count;
@@ -493,7 +522,7 @@ void* read_input(void* ptr){
 					}
 					else{
 						printf("Invalid command.\n");
-						print_usage(); //otherwise show correct command syntax
+						print_usage(); /*otherwise show correct command syntax*/
 					}
 				}
 				/*activate wingover code*/
@@ -537,6 +566,7 @@ void* printf_loop(void* ptr){
 			printf("  Pitch  |");
 			printf("  Roll  |");
 			printf("  WS Delay  |");
+			printf("  Setpoint  |");
 			printf("  Error  |");
 			printf("  LS L  |");
 			printf("  LS R  |");
@@ -556,6 +586,7 @@ void* printf_loop(void* ptr){
 			printf("  %5.2f  |", sys_state.angle_about_y_axis);
 			printf("%6.2f  |", sys_state.angle_about_x_axis);
 			printf("%10.2d  |", cfg_setting.PULSE_DELAY);
+			printf("%10.2f  |", controller_state.WS_angle_setpoint);
 			printf("%7.2f  |", controller_state.error);
 			printf("%6.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_1_PIN));
 			printf("%6.2d  |", rc_gpio_get_value_mmap(cfg_setting.LIMIT_SWITCH_2_PIN));
@@ -838,18 +869,20 @@ int get_config_settings(){
 	else{
 	fprintf(stderr, "No 'K_D' setting in configuration file.\n");
 	}
-	
+
 	int j;
 	config_setting_t *setting1, *setting2;
 	setting1 = config_lookup(&cfg,"WINGOVER_ANGLES");
 	if(setting1 != NULL){
 		for(j=0;j<config_setting_length(setting1);j++){
 			cfg_setting.WINGOVER_ANGLES[j] = config_setting_get_int_elem(setting1,j);
+			printf("%d ",cfg_setting.WINGOVER_ANGLES[j] );
 		}
 	}
 	else{
 		fprintf(stderr, "No 'WINGOVER_ANGLES' setting in configuration file.\n");
 	}
+	printf("\n");
 
 	setting2 = config_lookup(&cfg,"WINGOVER_TIMING");
 	if(setting2 != NULL){
